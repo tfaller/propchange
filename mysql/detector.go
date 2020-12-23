@@ -122,7 +122,7 @@ func (d *Detector) prepare() (err error) {
 			SET p.revision = ?, lp.changed = lp.expected < ? WHERE p.id = ?`},
 
 		{Name: "insert-listener", Target: &d.stmtNewListener,
-			Query: "INSERT INTO listener (name) VALUES (?)"},
+			Query: "INSERT INTO listener (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"},
 
 		// adding listening props is complicated ... we have to lookup the document & property Ids
 		// and compare if the listener already should trigger. To do this, without complex dynamic generated
@@ -141,7 +141,9 @@ func (d *Detector) prepare() (err error) {
 					rev BIGINT PATH '$.rev'
 				))) AS x) AS j
 			JOIN document doc ON doc.name = j.doc
-			JOIN property prop ON prop.document = doc.id AND prop.name = j.prop FOR UPDATE)`},
+			JOIN property prop ON prop.document = doc.id AND prop.name = j.prop FOR UPDATE)
+			ON DUPLICATE KEY UPDATE expected = LEAST(VALUES(expected), expected), changed = (VALUES(changed) OR changed)
+			`},
 
 		{Name: "add-listener-docs", Target: &d.stmtAddListenerDocs,
 			Query: `
@@ -150,7 +152,8 @@ func (d *Detector) prepare() (err error) {
 				doc VARCHAR(2048) PATH '$.doc',
 				listener BIGINT PATH '$.listener')
 			) AS j
-			JOIN document doc ON doc.name = j.doc`,
+			JOIN document doc ON doc.name = j.doc
+			ON DUPLICATE KEY UPDATE document = document`,
 		},
 
 		{Name: "del-listener", Target: &d.stmtDelListener,

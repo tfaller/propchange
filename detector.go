@@ -40,8 +40,13 @@ type Detector interface {
 	// operation on the document
 	OpenDocument(ctx context.Context, name string) (DocumentOps, error)
 
-	// AddListener creates a listener, that watches for properties to change.
-	// The given name must be a unique name.
+	// AddListener creates or updates a listener, that watches for properties to change.
+	// If a listener already exists, that listeners gets updated. The given filter
+	// is simply "appended" to the already existing listener. So if the existing listener
+	// listened to doc "A", and the "new" listener filtered for doc "B", the updated
+	// listener listens for document "A" and "B".
+	// Important: A listener name should never be reused after it triggered a change.
+	// This could lead to unexpected behavior, depanding on the backend.
 	// The filtered documents and properties must already exist.
 	// If they exist not, that part of the filter is silently ignored. The other
 	// parts are still applayed. This, on the first look bad behavior, is done
