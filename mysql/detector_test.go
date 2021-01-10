@@ -144,8 +144,44 @@ func TestUpdateListener(t *testing.T) {
 	}
 }
 
+func BenchmarkNextChange(b *testing.B) {
+	ctx := context.TODO()
+
+	// insert test data
+	for i := 0; i < b.N; i++ {
+		var docName = fmt.Sprintf("b-%v", i)
+
+		doc, err := detector.OpenDocument(ctx, docName)
+		bExpectNoError(err, b)
+		bExpectNoError(doc.SetProperty("prop", 1), b)
+		bExpectNoError(doc.Commit(), b)
+
+		bExpectNoError(detector.AddListener(ctx, docName, []propchange.ChangeFilter{
+			{
+				Document:   docName,
+				Properties: map[string]uint64{"prop": 0},
+			},
+		}), b)
+	}
+
+	// run actual tests
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		change, err := detector.NextChange(ctx)
+		bExpectNoError(err, b)
+		bExpectNoError(change.Commit(), b)
+	}
+}
+
 func expectNoError(err error, t *testing.T) {
 	if err != nil {
 		t.Fatalf("Expected no error but got %v", err)
+	}
+}
+
+func bExpectNoError(err error, b *testing.B) {
+	if err != nil {
+		b.Fatalf("Expected no error but got %v", err)
 	}
 }

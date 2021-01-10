@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/tfaller/go-sqlprepare"
@@ -15,6 +16,8 @@ import (
 // MaxNameBytesLen is the maximum length of bytes
 // which can be used for document, property and listener names.
 const MaxNameBytesLen = 1024
+
+var errInvalidName = errors.New("invalid name")
 
 // Detector implements the Detector with
 // a MySQL > 8.0.4 backend
@@ -34,7 +37,6 @@ type Detector struct {
 	stmtAddListenerDocs  *sql.Stmt
 	stmtDelListener      *sql.Stmt
 	stmtNextChange       *sql.Stmt
-	stmtAffectedDocs     *sql.Stmt
 }
 
 // mysqlOpenDoc is an open document
@@ -165,11 +167,10 @@ func (d *Detector) prepare() (err error) {
 		// if multiple properties of the same listener changed at the same time
 		{Name: "nxt-change", Target: &d.stmtNextChange,
 			Query: `
-			SELECT l.id, l.name FROM listener_property lp JOIN listener l ON l.id = lp.listener
+			SELECT l.id, l.name, 
+				(SELECT GROUP_CONCAT(d.name) FROM listener_document ld JOIN document d ON d.id = ld.document WHERE ld.listener = l.id) docs
+			FROM listener_property lp JOIN listener l ON l.id = lp.listener
 			WHERE lp.changed LIMIT 1 FOR UPDATE SKIP LOCKED`},
-
-		{Name: "aff-docs", Target: &d.stmtAffectedDocs,
-			Query: "SELECT d.name FROM listener_document ld JOIN document d ON d.id = ld.document WHERE ld.listener = ?"},
 	}...)
 }
 
@@ -177,6 +178,10 @@ func (d *Detector) prepare() (err error) {
 func (d *Detector) OpenDocument(ctx context.Context, name string) (propchange.DocumentOps, error) {
 	if len := len(name); len > MaxNameBytesLen {
 		return nil, &propchange.ErrTooLongName{Name: name, Len: len, MaxLen: MaxNameBytesLen}
+	}
+
+	if strings.Contains(name, ",") {
+		return nil, errInvalidName
 	}
 
 	tx, err := d.db.BeginTx(ctx, nil)
@@ -345,7 +350,8 @@ func (d *Detector) doNextChange(tx *sql.Tx) (propchange.OnChange, error) {
 
 	change := &mysqlChange{tx: tx, detector: d}
 
-	err := stmt.QueryRow().Scan(&change.listenerID, &change.listener)
+	var docs string
+	err := stmt.QueryRow().Scan(&change.listenerID, &change.listener, &docs)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -354,27 +360,9 @@ func (d *Detector) doNextChange(tx *sql.Tx) (propchange.OnChange, error) {
 		return nil, err
 	}
 
-	// we found a change ...
-	// find also affected documents
-	stmtAffected := tx.Stmt(d.stmtAffectedDocs)
-	defer stmtAffected.Close()
+	// docs is simply a comma seperated list of documents
+	change.documents = strings.Split(docs, ",")
 
-	rows, err := stmtAffected.Query(change.listenerID)
-	if err != nil {
-		return nil, err
-	}
-
-	docs := []string{}
-	for rows.Next() {
-		doc := ""
-		err = rows.Scan(&doc)
-		if err != nil {
-			return nil, err
-		}
-		docs = append(docs, doc)
-	}
-
-	change.documents = docs
 	return change, nil
 }
 
