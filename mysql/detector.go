@@ -170,7 +170,7 @@ func (d *Detector) prepare() (err error) {
 			SELECT l.id, l.name, 
 				(SELECT GROUP_CONCAT(d.name) FROM listener_document ld JOIN document d ON d.id = ld.document WHERE ld.listener = l.id) docs
 			FROM listener_property lp JOIN listener l ON l.id = lp.listener
-			WHERE lp.changed LIMIT 1 FOR UPDATE SKIP LOCKED`},
+			WHERE lp.changed = 1 LIMIT 1 FOR UPDATE SKIP LOCKED`},
 	}...)
 }
 

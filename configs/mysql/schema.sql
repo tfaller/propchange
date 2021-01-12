@@ -73,7 +73,7 @@ CREATE TABLE `listener_property` (
   `listener` bigint NOT NULL,
   `property` bigint NOT NULL,
   `expected` bigint NOT NULL,
-  `changed` tinyint NOT NULL,
+  `changed` tinyint(1) NOT NULL,
   PRIMARY KEY (`listener`,`property`),
   KEY `changed` (`changed`),
   KEY `property` (`property`),
