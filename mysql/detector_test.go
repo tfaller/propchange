@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/tfaller/propchange"
@@ -141,6 +142,53 @@ func TestUpdateListener(t *testing.T) {
 			t.Fatalf("%v: Expected error %v but got %v", testIdx, test.Error, err)
 		}
 		expectNoError(change.Commit(), t)
+	}
+}
+
+func TestNewDocument(t *testing.T) {
+	ctx := context.TODO()
+	docName := fmt.Sprintf("%v", time.Now().UnixNano())
+
+	// listen for document that does not exist
+	expectNoError(detector.AddListener(ctx, "listener-newdoc", []propchange.ChangeFilter{
+		{Document: docName, NewDocument: true},
+	}), t)
+
+	if _, err := detector.NextChange(ctx); err != propchange.ErrNoMoreChanges {
+		t.Fatal("expected to find no changes")
+	}
+
+	// add the document
+	doc, err := detector.OpenDocument(ctx, docName)
+	expectNoError(err, t)
+	if !doc.IsNew() {
+		t.Fatal("document should be new")
+	}
+	expectNoError(doc.Commit(), t)
+
+	for i := 0; i < 2; i++ {
+		change, err := detector.NextChange(ctx)
+		expectNoError(err, t)
+
+		if change.Listener() != "listener-newdoc" {
+			t.Fatal("Got wrong listener")
+		}
+		if len(change.Documents()) != 1 || change.Documents()[0] != docName {
+			t.Fatal("Got wrong document")
+		}
+
+		expectNoError(change.Commit(), t)
+
+		if _, err := detector.NextChange(ctx); err != propchange.ErrNoMoreChanges {
+			t.Fatal("expected to find no changes")
+		}
+
+		if i == 0 {
+			// listen again, but now the document exists
+			expectNoError(detector.AddListener(ctx, "listener-newdoc", []propchange.ChangeFilter{
+				{Document: docName, NewDocument: true},
+			}), t)
+		}
 	}
 }
 

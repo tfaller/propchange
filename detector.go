@@ -47,7 +47,7 @@ type Detector interface {
 	// listener listens for document "A" and "B".
 	// Important: A listener name should never be reused after it triggered a change.
 	// This could lead to unexpected behavior, depanding on the backend.
-	// The filtered documents and properties must already exist.
+	// The filtered properties must already exist.
 	// If they exist not, that part of the filter is silently ignored. The other
 	// parts are still applayed. This, on the first look bad behavior, is done
 	// because of two main important points (and simplicity ...):
@@ -60,16 +60,19 @@ type Detector interface {
 	//   queue, insted of a FIFO queue. Also, a FIFO queue could be problematic if one package
 	//   causes trouble. The whole queue might be stuck, because one change could not be processed.
 	// It is the users task to work around this "limitation". There exists simple solutions.
-	// Register listeners AFTER a document was confirmed to be inserted -> There is a "IsNew" Flag,
-	// that indicates that a document is new.
-	// Also, if the users knows, that a property might currently not exists, but wants to track
+	// If the users knows, that a property might currently not exists, but wants to track
 	// for changes, add a property that exists for sure and reflects that other property. E.g.:
 	// "A" -> "B". Here "B" is a sub property of "A". If B gets added, or deleted, "A" should
 	// indicate a change as well. A listener can now listen for "A" AND "B". If B does not exists at
 	// the moment, that filter is ignored ... BUT "A" exists. Now someone adds "B" to "A". This
 	// causes also "A" to indicate a change -> the original listener gets triggered as intended.
 	// Sure, if someone would have added "C" to "A", instead of "B", the event have be also
-	// triggered. But get better more events, than noting.
+	// triggered. But get better more events, than noting. Also, documents, must exists
+	// if a simple filter is applied. Otherwise it is ignored as well. However, if the user
+	// knows that the document does not exist, instead of listening for properties, the
+	// listener can listen for document creation. A filter can either listen for the creation of
+	// the document or for properties. This is because the filter would always trigger right away
+	// if the document already exists.
 	AddListener(ctx context.Context, name string, filter []ChangeFilter) error
 
 	// DelListener deletes a given listener
@@ -84,8 +87,9 @@ type Detector interface {
 // A event for this listener is triggered, if the new property revision
 // is larger than the revision of the property in the filter
 type ChangeFilter struct {
-	Document   string
-	Properties map[string]uint64
+	Document    string
+	NewDocument bool
+	Properties  map[string]uint64
 }
 
 // OnChange is an change event

@@ -13,9 +13,21 @@ import (
 	"github.com/tfaller/propchange"
 )
 
-// MaxNameBytesLen is the maximum length of bytes
-// which can be used for document, property and listener names.
-const MaxNameBytesLen = 1024
+const (
+	// MaxNameBytesLen is the maximum length of bytes
+	// which can be used for document, property and listener names.
+	MaxNameBytesLen = 1024
+
+	newDocProperty = ":new"
+
+	// is a complete new document
+	docStateNew = 0
+	// document is not new in the database,
+	// but the user did not know about this document
+	docStateExistingNew = 1
+	// the document is a existing document.
+	docStateExisting = 2
+)
 
 var errInvalidName = errors.New("invalid name")
 
@@ -28,6 +40,7 @@ type Detector struct {
 	stmtOpenDoc          *sql.Stmt
 	stmtDelDoc           *sql.Stmt
 	stmtInsertDoc        *sql.Stmt
+	stmtCreatedDoc       *sql.Stmt
 	stmtDelProperty      *sql.Stmt
 	stmtGetProperties    *sql.Stmt
 	stmtInsertProperty   *sql.Stmt
@@ -45,7 +58,7 @@ type mysqlOpenDoc struct {
 	tx       *sql.Tx
 	detector *Detector
 	closed   bool
-	isNew    bool
+	state    int
 	docID    uint64
 	props    map[string]*mysqlDocProp
 }
@@ -104,7 +117,7 @@ func (d *Detector) prepare() (err error) {
 			Query: "SELECT id FROM document WHERE name = ? FOR UPDATE"},
 
 		{Name: "insert-doc", Target: &d.stmtInsertDoc,
-			Query: "INSERT INTO document (name) VALUES (?)"},
+			Query: "INSERT INTO document (name, created) VALUES (?, 0)"},
 
 		{Name: "del-doc", Target: &d.stmtDelDoc,
 			Query: "DELETE FROM document WHERE id = ?"},
@@ -168,22 +181,17 @@ func (d *Detector) prepare() (err error) {
 		{Name: "nxt-change", Target: &d.stmtNextChange,
 			Query: `
 			SELECT l.id, l.name, 
-				(SELECT GROUP_CONCAT(d.name) FROM listener_document ld JOIN document d ON d.id = ld.document WHERE ld.listener = l.id) docs
+				(SELECT GROUP_CONCAT(d.name) FROM listener_document ld JOIN document d ON d.id = ld.document AND created = 1 WHERE ld.listener = l.id FOR SHARE) docs
 			FROM listener_property lp JOIN listener l ON l.id = lp.listener
 			WHERE lp.changed = 1 LIMIT 1 FOR UPDATE SKIP LOCKED`},
+
+		{Name: "doc-created", Target: &d.stmtCreatedDoc,
+			Query: `UPDATE document SET created = 1 WHERE id = ?`},
 	}...)
 }
 
 // OpenDocument opens a doc as defined in the Detector specification
 func (d *Detector) OpenDocument(ctx context.Context, name string) (propchange.DocumentOps, error) {
-	if len := len(name); len > MaxNameBytesLen {
-		return nil, &propchange.ErrTooLongName{Name: name, Len: len, MaxLen: MaxNameBytesLen}
-	}
-
-	if strings.Contains(name, ",") {
-		return nil, errInvalidName
-	}
-
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("Cant open transaction: %w", err)
@@ -200,7 +208,15 @@ func (d *Detector) OpenDocument(ctx context.Context, name string) (propchange.Do
 	return doc, nil
 }
 
-func (d *Detector) doOpenDocument(name string, tx *sql.Tx) (propchange.DocumentOps, error) {
+func (d *Detector) doOpenDocument(name string, tx *sql.Tx) (*mysqlOpenDoc, error) {
+	if len := len(name); len > MaxNameBytesLen {
+		return nil, &propchange.ErrTooLongName{Name: name, Len: len, MaxLen: MaxNameBytesLen}
+	}
+
+	if strings.Contains(name, ",") {
+		return nil, errInvalidName
+	}
+
 	// first try to open the doc ...
 	// maybe it exists already
 	doc, err := d.tryOpenDoc(name, tx)
@@ -217,7 +233,7 @@ func (d *Detector) doOpenDocument(name string, tx *sql.Tx) (propchange.DocumentO
 	return d.insertNewDoc(name, tx)
 }
 
-func (d *Detector) tryOpenDoc(name string, tx *sql.Tx) (propchange.DocumentOps, error) {
+func (d *Detector) tryOpenDoc(name string, tx *sql.Tx) (*mysqlOpenDoc, error) {
 	row := tx.Stmt(d.stmtOpenDoc).QueryRow(name)
 	docID := uint64(0)
 	err := row.Scan(&docID)
@@ -242,10 +258,15 @@ func (d *Detector) tryOpenDoc(name string, tx *sql.Tx) (propchange.DocumentOps, 
 		props[prop.name] = prop
 	}
 
-	return &mysqlOpenDoc{tx: tx, docID: docID, detector: d, props: props}, nil
+	state := docStateExisting
+	if newProp := props[newDocProperty]; newProp.revision == 0 {
+		state = docStateExistingNew
+	}
+
+	return &mysqlOpenDoc{tx: tx, docID: docID, detector: d, state: state, props: props}, nil
 }
 
-func (d *Detector) insertNewDoc(name string, tx *sql.Tx) (propchange.DocumentOps, error) {
+func (d *Detector) insertNewDoc(name string, tx *sql.Tx) (*mysqlOpenDoc, error) {
 	res, err := tx.Stmt(d.stmtInsertDoc).Exec(name)
 	if err != nil {
 		return nil, err
@@ -255,7 +276,7 @@ func (d *Detector) insertNewDoc(name string, tx *sql.Tx) (propchange.DocumentOps
 		return nil, err
 	}
 	// insert was successfull
-	return &mysqlOpenDoc{tx: tx, docID: uint64(docID), isNew: true, detector: d, props: map[string]*mysqlDocProp{}}, nil
+	return &mysqlOpenDoc{tx: tx, docID: uint64(docID), state: docStateNew, detector: d, props: map[string]*mysqlDocProp{}}, nil
 }
 
 // AddListener adds a new Listener. Like defined in the Detector interface
@@ -293,6 +314,29 @@ func (d *Detector) doAddListener(name string, filter []propchange.ChangeFilter, 
 	// build json document that is used to bulk import the listener data
 	insertJSON := make([]listenerFilterImport, len(filter))
 	for idx, f := range filter {
+		if f.NewDocument {
+			if len(f.Properties) > 0 {
+				// Discurage the usage of NewDocument and Properties at the same time.
+				return fmt.Errorf("NewDocument can't be used if properties are set")
+			}
+
+			// listener wants to listen to the creation of the document
+			// it is possible that it does not exists yet ...
+			doc, err := d.doOpenDocument(f.Document, tx)
+			if err != nil {
+				return err
+			}
+
+			if doc.state == docStateNew {
+				if err := doc.newProperty(newDocProperty, 0); err != nil {
+					return err
+				}
+			}
+
+			// add filter property
+			f.Properties = map[string]uint64{newDocProperty: 0}
+		}
+
 		insertJSON[idx].Document = f.Document
 		insertJSON[idx].Listener = uint64(id)
 
@@ -387,6 +431,25 @@ func (m *mysqlOpenDoc) Commit() error {
 		return propchange.ErrDocAlreadyClosedError
 	}
 
+	if m.state != docStateExisting {
+		// the user created the document for the first time
+		if newProp := m.props[newDocProperty]; newProp != nil {
+			newProp.revision++
+			newProp.changed = true
+		} else {
+			err := m.newProperty(newDocProperty, 1)
+			if err != nil {
+				return err
+			}
+		}
+
+		// mark document as created by user
+		_, err := m.tx.Stmt(m.detector.stmtCreatedDoc).Exec(m.docID)
+		if err != nil {
+			return err
+		}
+	}
+
 	// apply changes now ...
 	stmt := m.tx.Stmt(m.detector.stmtUpdateProperty)
 	defer stmt.Close()
@@ -462,6 +525,9 @@ func (m *mysqlOpenDoc) GetProperties() map[string]uint64 {
 }
 
 func (m *mysqlOpenDoc) SetProperty(name string, rev uint64) error {
+	if strings.HasPrefix(name, ":") {
+		return errInvalidName
+	}
 	if len := len(name); len > MaxNameBytesLen {
 		return &propchange.ErrTooLongName{Name: name, Len: len, MaxLen: MaxNameBytesLen}
 	}
@@ -506,7 +572,7 @@ func (m *mysqlOpenDoc) newProperty(name string, rev uint64) error {
 }
 
 func (m *mysqlOpenDoc) IsNew() bool {
-	return m.isNew
+	return m.state != docStateExisting
 }
 
 func (m *mysqlChange) Listener() string {
