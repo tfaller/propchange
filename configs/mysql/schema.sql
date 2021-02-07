@@ -25,6 +25,7 @@ DROP TABLE IF EXISTS `document`;
 CREATE TABLE `document` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `name` varbinary(1024) NOT NULL,
+  `created` TINYINT(1) NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE `name` (`name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
