@@ -142,7 +142,7 @@ func (d *Detector) prepare() (err error) {
 		// adding listening props is complicated ... we have to lookup the document & property Ids
 		// and compare if the listener already should trigger. To do this, without complex dynamic generated
 		// SQL, we can use a JSON document -> we have only one network round trip.
-		// Note: Because we check if the listener is updated already, we HAVE TO use "SELECT ... FOR UPDATE"
+		// Note: Because we check if the listener is updated already, we HAVE TO use "SELECT ... FOR SHARE"
 		// Otherwise we could have an race condition.
 		{Name: "add-listener-props", Target: &d.stmtAddListenerProps,
 			Query: `
@@ -156,7 +156,7 @@ func (d *Detector) prepare() (err error) {
 					rev BIGINT PATH '$.rev'
 				))) AS x) AS j
 			JOIN document doc ON doc.name = j.doc
-			JOIN property prop ON prop.document = doc.id AND prop.name = j.prop FOR UPDATE)
+			JOIN property prop ON prop.document = doc.id AND prop.name = j.prop FOR SHARE)
 			ON DUPLICATE KEY UPDATE expected = LEAST(VALUES(expected), expected), changed = (VALUES(changed) OR changed)
 			`},
 
