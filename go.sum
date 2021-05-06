@@ -1,4 +1,4 @@
-github.com/go-sql-driver/mysql v1.5.0 h1:ozyZYNQW3x3HtqT1jira07DN2PArx2v7/mN66gGcHOs=
-github.com/go-sql-driver/mysql v1.5.0/go.mod h1:DCzpHaOWr8IXmIStZouvnhqoel9Qv2LBy8hT2VhHyBg=
+github.com/go-sql-driver/mysql v1.6.0 h1:BCTh4TKNUYmOmMUcQ3IipzF5prigylS7XXjEkfCHuOE=
+github.com/go-sql-driver/mysql v1.6.0/go.mod h1:DCzpHaOWr8IXmIStZouvnhqoel9Qv2LBy8hT2VhHyBg=
 github.com/tfaller/go-sqlprepare v0.0.0-20200926193806-f262fddc887a h1:X2TOuGH1QNeesSWfuTBIMCNbv3bm+ex/yVMXGUps88M=
 github.com/tfaller/go-sqlprepare v0.0.0-20200926193806-f262fddc887a/go.mod h1:q5AaR1kSJdvCqaes7eqJP5v1jFjdOp4t08oEp0BpuN4=
