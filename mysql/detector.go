@@ -376,7 +376,7 @@ func (d *Detector) DelListener(ctx context.Context, listener string) error {
 func (d *Detector) NextChange(ctx context.Context) (propchange.OnChange, error) {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("can't open transaction: %w", err)
 	}
 
 	// try to get the next change ...
@@ -401,7 +401,7 @@ func (d *Detector) doNextChange(tx *sql.Tx) (propchange.OnChange, error) {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, propchange.ErrNoMoreChanges
 		}
-		return nil, err
+		return nil, fmt.Errorf("can't read next change: %w", err)
 	}
 
 	// docs is simply a comma seperated list of documents
@@ -557,7 +557,7 @@ func (m *mysqlOpenDoc) newProperty(name string, rev uint64) error {
 
 	res, err := stmt.Exec(name, m.docID, rev)
 	if err != nil {
-		return err
+		return fmt.Errorf("can't insert new property: %w", err)
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
@@ -595,7 +595,7 @@ func (m *mysqlChange) Commit() error {
 
 	_, err := stmt.Exec(m.listener)
 	if err != nil {
-		return err
+		return fmt.Errorf("can't delete listener: %w", err)
 	}
 	return m.tx.Commit()
 }
