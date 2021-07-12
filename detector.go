@@ -13,6 +13,12 @@ var ErrDocAlreadyClosedError = errors.New("doc was already closed")
 // ErrNoMoreChanges indicates that no more changes were found
 var ErrNoMoreChanges = errors.New("no more new changes found")
 
+// ErrEmptyFilter indicates that no filter was provied.
+var ErrEmptyFilter = errors.New("listener has no filter set")
+
+// ErrInvalidListenerName indicates that a given listener name was invalid
+var ErrInvalidListenerName = errors.New("listener name is invalid")
+
 // Detector is a service that emits an event if given properties changed of an document.
 // With this service it is possible to answer the question:
 // "If X changes, what is affected by this change?"
@@ -75,7 +81,7 @@ type Detector interface {
 	// if the document already exists.
 	AddListener(ctx context.Context, name string, filter []ChangeFilter) error
 
-	// DelListener deletes a given listener
+	// DelListener deletes a given listener. If the listeners does not exist, it is silently ignored.
 	DelListener(ctx context.Context, listener string) error
 
 	// NextChange returns the next change that was not

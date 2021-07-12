@@ -13,6 +13,7 @@ service.
 ## Features
 * Simple "Detector" interface
 * MySQL backend
+* In-Memory backend
 
 ## Planned
 * More backends
