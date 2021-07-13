@@ -130,18 +130,26 @@ func (m *mem) AddListener(ctx context.Context, name string, filter []propchange.
 				break
 			}
 
-			if _, exists := l.props[prop]; exists {
-				// we listen already for this prop
+			chain := l.props[prop]
+			if chain != nil && chain.revision <= rev {
+				// don't update lower listener
 				continue
 			}
 
 			prop.m.Lock()
+
 			if prop.revision > rev {
 				// already trigger
 				shouldTrigger = true
 				prop.m.Unlock()
 				break
 			}
+
+			if chain != nil && chain.revision > rev {
+				// remove current listener to insert the lower one
+				prop.removeChain(chain)
+			}
+
 			l.props[prop] = prop.listenTo(l, rev)
 			prop.m.Unlock()
 		}
@@ -320,11 +328,7 @@ func (o *openDoc) GetProperties() map[string]uint64 {
 		if _, wasDel := o.propsDel[name]; wasDel {
 			continue
 		}
-		if rev := o.props[name]; rev > prop.revision {
-			props[name] = rev
-		} else {
-			props[name] = prop.revision
-		}
+		props[name] = prop.revision
 	}
 
 	for name, rev := range o.props {
@@ -448,6 +452,9 @@ func (p *prop) listenTo(l *listener, revision uint64) *listenerChain {
 		for revision > current.revision && current.next != nil {
 			current = current.next
 		}
+		if revision <= current.revision {
+			current = current.prev
+		}
 	}
 
 	current = &listenerChain{
@@ -457,10 +464,17 @@ func (p *prop) listenTo(l *listener, revision uint64) *listenerChain {
 	}
 
 	if current.prev == nil {
+		if p.listeners != nil {
+			p.listeners.prev = current
+		}
+		current.next = p.listeners
 		p.listeners = current
 	} else {
 		current.next = current.prev.next
 		current.prev.next = current
+		if current.next != nil {
+			current.next.prev = current
+		}
 	}
 
 	return current
@@ -473,7 +487,7 @@ func (p *prop) triggerChange(m *mem, rev uint64) {
 
 	current := p.listeners
 
-	for current != nil && current.revision <= rev {
+	for current != nil && current.revision < rev {
 		m.addChange(current.listener)
 		current = current.next
 	}
@@ -482,20 +496,24 @@ func (p *prop) triggerChange(m *mem, rev uint64) {
 	p.listeners = current
 }
 
+func (p *prop) removeChain(chain *listenerChain) {
+	if chain.prev == nil {
+		p.listeners = chain.next
+		if p.listeners != nil {
+			p.listeners.prev = nil
+		}
+	} else {
+		chain.prev.next = chain.next
+		if chain.next != nil {
+			chain.next.prev = chain.prev
+		}
+	}
+}
+
 func (l *listener) delete() {
 	for prop, chain := range l.props {
 		prop.m.Lock()
-
-		if chain.prev == nil {
-			prop.listeners = chain.next
-			if prop.listeners != nil {
-				prop.listeners.prev = nil
-			}
-		} else {
-			chain.prev.next = chain.next
-			chain.prev.prev = chain.prev
-		}
-
+		prop.removeChain(chain)
 		prop.m.Unlock()
 	}
 }
