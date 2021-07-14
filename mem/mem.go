@@ -265,10 +265,9 @@ func (m *mem) addChange(l *listener) {
 	m.mChanges.Lock()
 	defer m.mChanges.Unlock()
 
-	m.changes[l] = struct{}{}
-
-	if _, exists := m.changesOpen[l]; !exists {
+	if _, exists := m.changes[l]; !exists {
 		m.changesOpen[l] = struct{}{}
+		m.changes[l] = struct{}{}
 	}
 }
 

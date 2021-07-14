@@ -25,6 +25,7 @@ func TestSuit(detector propchange.Detector, t *testing.T) {
 	t.Run("TestNewDocument", func(t *testing.T) { TestNewDocument(detector, t) })
 	t.Run("TestAbortNewDocument", func(t *testing.T) { TestAbortNewDocument(detector, t) })
 	t.Run("TestAbortChange", func(t *testing.T) { TestAbortChange(detector, t) })
+	t.Run("TestSingleChange", func(t *testing.T) { TestSingleChange(detector, t) })
 }
 
 func TestBasicChange(detector propchange.Detector, t *testing.T) {
@@ -563,6 +564,35 @@ func TestAbortChange(detector propchange.Detector, t *testing.T) {
 		}
 	}
 
+	assertNoChange(t, ctx, detector)
+}
+
+func TestSingleChange(detector propchange.Detector, t *testing.T) {
+	ctx := context.TODO()
+
+	// prepare a doc with two props
+	doc := assertOpenNewDoc(t, ctx, detector, "single")
+	assert.NoError(t, doc.SetProperty("a", 1))
+	assert.NoError(t, doc.SetProperty("b", 1))
+	assert.NoError(t, doc.Commit())
+
+	// listen for both props
+	assert.NoError(t, detector.AddListener(ctx, "s", []propchange.ChangeFilter{{Document: "single", Properties: map[string]uint64{"a": 1, "b": 1}}}))
+
+	// change both props
+	doc, err := detector.OpenDocument(ctx, "single")
+	assert.NoError(t, err)
+	assert.NoError(t, doc.SetProperty("a", 2))
+	assert.NoError(t, doc.SetProperty("b", 2))
+	assert.NoError(t, doc.Commit())
+
+	// This should trigger only one change.
+	change, err := detector.NextChange(ctx)
+	assert.NoError(t, err)
+	assertChange(t, change, "s", []string{"single"})
+	assert.NoError(t, change.Commit())
+
+	// no more changes ...
 	assertNoChange(t, ctx, detector)
 }
 
