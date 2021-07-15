@@ -7,5 +7,5 @@ import (
 )
 
 func TestSuit(t *testing.T) {
-	tests.TestSuit(NewMem(), t)
+	tests.TestSuite(NewMem(), t)
 }

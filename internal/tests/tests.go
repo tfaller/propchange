@@ -11,7 +11,7 @@ import (
 	"github.com/tfaller/propchange"
 )
 
-func TestSuit(detector propchange.Detector, t *testing.T) {
+func TestSuite(detector propchange.Detector, t *testing.T) {
 	t.Run("TestBasicChange", func(t *testing.T) { TestBasicChange(detector, t) })
 	t.Run("TestUsedCloseDoc", func(t *testing.T) { TestUsedCloseDoc(detector, t) })
 	t.Run("TestDelDocument", func(t *testing.T) { TestDelDocument(detector, t) })
