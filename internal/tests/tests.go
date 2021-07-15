@@ -20,6 +20,7 @@ func TestSuit(detector propchange.Detector, t *testing.T) {
 	t.Run("TestDelListener", func(t *testing.T) { TestDelListener(detector, t) })
 	t.Run("TestInvalidListener", func(t *testing.T) { TestInvalidListener(detector, t) })
 	t.Run("TestListenerMulti", func(t *testing.T) { TestListenerMulti(detector, t) })
+	t.Run("TestListenerMultiDelete", func(t *testing.T) { TestListenerMultiDelete(detector, t) })
 	t.Run("TestListenerDocNotExisting", func(t *testing.T) { TestListenerDocNotExisting(detector, t) })
 	t.Run("TestListenerPropNotExisting", func(t *testing.T) { TestListenerPropNotExisting(detector, t) })
 	t.Run("TestNewDocument", func(t *testing.T) { TestNewDocument(detector, t) })
@@ -416,6 +417,63 @@ func TestListenerMulti(detector propchange.Detector, t *testing.T) {
 			assert.NoError(t, err, listener)
 			assertChange(t, change, listener, []string{"multi"})
 			assert.NoError(t, change.Commit())
+		}
+	}
+
+	assertNoChange(t, ctx, detector)
+}
+
+func TestListenerMultiDelete(detector propchange.Detector, t *testing.T) {
+	ctx := context.TODO()
+	docName := "multi-del"
+
+	doc := assertOpenNewDoc(t, ctx, detector, docName)
+	assert.NoError(t, doc.SetProperty("a", 0))
+	assert.NoError(t, doc.Commit())
+
+	testCases := []struct {
+		setnewRev         uint64
+		listenRev         []uint64
+		delete            []string
+		triggeredListener []string
+	}{
+		{setnewRev: 1, listenRev: []uint64{0, 1, 2}, delete: []string{"2", "1"}, triggeredListener: []string{"0"}},
+		{setnewRev: 2, listenRev: []uint64{1, 2, 3}, delete: []string{"1", "2"}, triggeredListener: []string{"0"}},
+		{setnewRev: 3, listenRev: []uint64{2, 3, 4}, delete: []string{"0", "1", "2"}, triggeredListener: []string{}},
+		{setnewRev: 5, listenRev: []uint64{3, 5, 4}, delete: []string{"1"}, triggeredListener: []string{"0", "2"}},
+		{setnewRev: 7, listenRev: []uint64{5, 6, 7}, delete: []string{"0", "2"}, triggeredListener: []string{"1"}},
+	}
+
+	for _, test := range testCases {
+		assertNoChange(t, ctx, detector)
+
+		// register listeners
+		for i, rev := range test.listenRev {
+			assert.NoError(t, detector.AddListener(ctx, fmt.Sprint(i), []propchange.ChangeFilter{{Document: docName, Properties: map[string]uint64{"a": rev}}}))
+		}
+
+		// delete listeners early
+		for _, l := range test.delete {
+			assert.NoError(t, detector.DelListener(ctx, l))
+		}
+
+		// perform change
+		doc, err := detector.OpenDocument(ctx, docName)
+		assert.NoError(t, err)
+		assert.NoError(t, doc.SetProperty("a", test.setnewRev))
+		assert.NoError(t, doc.Commit())
+
+		// check for expected changes
+
+		done := map[string]struct{}{}
+		for i := len(test.triggeredListener) - 1; i >= 0; i-- {
+			change, err := detector.NextChange(ctx)
+			assert.NoError(t, err)
+			assert.Equal(t, []string{docName}, change.Documents())
+			assert.NotContains(t, done, change.Listener())
+			assert.Contains(t, test.triggeredListener, change.Listener())
+			assert.NoError(t, change.Commit())
+			done[change.Listener()] = struct{}{}
 		}
 	}
 
