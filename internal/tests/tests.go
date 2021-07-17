@@ -651,6 +651,9 @@ func TestSingleChange(detector propchange.Detector, t *testing.T) {
 	change, err := detector.NextChange(ctx)
 	assert.NoError(t, err)
 	assertChange(t, change, "s", []string{"single"})
+	// no other open change
+	assertNoChange(t, ctx, detector)
+	// commit change
 	assert.NoError(t, change.Commit())
 
 	// no more changes ...
