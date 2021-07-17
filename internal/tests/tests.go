@@ -661,6 +661,9 @@ func assertNoChange(t *testing.T, ctx context.Context, detector propchange.Detec
 	change, err := detector.NextChange(ctx)
 	assert.Nil(t, change, "no change expected")
 	assert.ErrorIs(t, propchange.ErrNoMoreChanges, err)
+	if change != nil {
+		require.NoError(t, change.Close())
+	}
 }
 
 func assertDocExists(t *testing.T, ctx context.Context, detector propchange.Detector, name string) {
