@@ -235,18 +235,19 @@ func TestUpdateListener(detector propchange.Detector, t *testing.T) {
 	testCases := []struct {
 		VersionA, VersionB, ChangeVersion uint64
 		DocA, DocB, ChangeDoc             string
+		ListenerDocs                      []string
 	}{
 		// simple test case, register first listener at docA, add listener for docB
 		// trigger change on docA.
-		{VersionA: 1, VersionB: 1, DocA: "a", DocB: "b", ChangeDoc: "a", ChangeVersion: 2},
+		{VersionA: 1, VersionB: 1, DocA: "a", DocB: "b", ChangeDoc: "a", ChangeVersion: 2, ListenerDocs: []string{"a", "b"}},
 		// simple test case, register first listener at docA, add listener for docB
 		// trigger change on docB.
-		{VersionA: 2, VersionB: 1, DocA: "a", DocB: "b", ChangeDoc: "b", ChangeVersion: 2},
+		{VersionA: 2, VersionB: 1, DocA: "a", DocB: "b", ChangeDoc: "b", ChangeVersion: 2, ListenerDocs: []string{"a", "b"}},
 		// overwrite listener property filter with a higher property number -> the lower number
 		// should still be triggered
-		{VersionA: 2, VersionB: 3, DocA: "a", DocB: "a", ChangeDoc: "a", ChangeVersion: 3},
+		{VersionA: 2, VersionB: 3, DocA: "a", DocB: "a", ChangeDoc: "a", ChangeVersion: 3, ListenerDocs: []string{"a"}},
 		// overwrite a higher property filter with a lower -> the lower should trigger
-		{VersionA: 4, VersionB: 3, DocA: "a", DocB: "a", ChangeDoc: "a", ChangeVersion: 4},
+		{VersionA: 4, VersionB: 3, DocA: "a", DocB: "a", ChangeDoc: "a", ChangeVersion: 4, ListenerDocs: []string{"a"}},
 	}
 
 	for _, test := range testCases {
@@ -267,6 +268,8 @@ func TestUpdateListener(detector propchange.Detector, t *testing.T) {
 
 		change, err := detector.NextChange(ctx)
 		assert.NoError(t, err)
+		assert.Equal(t, "updatefilter", change.Listener())
+		assert.ElementsMatch(t, test.ListenerDocs, change.Documents())
 		assert.NoError(t, change.Commit())
 	}
 }
