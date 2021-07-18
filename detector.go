@@ -42,7 +42,7 @@ var ErrInvalidListenerName = errors.New("listener name is invalid")
 // If the same listener also listened for property "#" of document "C", we could not say whether the
 // change of "@" or "#" caused the listener to trigger. So a listener tells us THAT something changed,
 // but not WHAT EXACTLY changed. We only know that at least one property of any of the filtered documents
-// got changed. So one lister should only filter multiple documents if they are really efffacted by eachother.
+// got changed. So one lister should only filter multiple documents if they are really effacted by eachother.
 type Detector interface {
 	// OpenDocument opens a document to perform
 	// operation on the document
@@ -55,29 +55,9 @@ type Detector interface {
 	// listener listens for document "A" and "B".
 	// Important: A listener name should never be reused after it triggered a change.
 	// This could lead to unexpected behavior, depanding on the backend.
-	// The filtered properties must already exist.
-	// If they exist not, that part of the filter is silently ignored. The other
-	// parts are still applayed. This, on the first look bad behavior, is done
-	// because of two main important points (and simplicity ...):
-	// - Filter documents and properties that might exists in the future
-	//   is a waste of ressources. This has the potential to accumulate over the
-	//   time to huge amounts of never used data
-	// - With this assumption we can use a a highly scalable platform.
-	//   We can basically process changes (to documents and to add listeners) in any
-	// 	 order. We don't have to wait one A to do B. We can e.g. use a simple any ordered
-	//   queue, insted of a FIFO queue. Also, a FIFO queue could be problematic if one package
-	//   causes trouble. The whole queue might be stuck, because one change could not be processed.
-	// It is the users task to work around this "limitation". There exists simple solutions.
-	// If the users knows, that a property might currently not exists, but wants to track
-	// for changes, add a property that exists for sure and reflects that other property. E.g.:
-	// "A" -> "B". Here "B" is a sub property of "A". If B gets added, or deleted, "A" should
-	// indicate a change as well. A listener can now listen for "A" AND "B". If B does not exists at
-	// the moment, that filter is ignored ... BUT "A" exists. Now someone adds "B" to "A". This
-	// causes also "A" to indicate a change -> the original listener gets triggered as intended.
-	// Sure, if someone would have added "C" to "A", instead of "B", the event have be also
-	// triggered. But get better more events, than noting. Also, documents, must exists
-	// if a simple filter is applied. Otherwise it is ignored as well. However, if the user
-	// knows that the document does not exist, instead of listening for properties, the
+	// If a document or property does not exist, the listener will get instantly triggered.
+	// This is because the property or document maybe existed, but got deleted in the meantime.
+	// If it's known that a document does not exist, instead of listening for properties, the
 	// listener can listen for document creation. A filter can either listen for the creation of
 	// the document or for properties. This is because the filter would always trigger right away
 	// if the document already exists.
@@ -127,9 +107,7 @@ type DocumentOps interface {
 	GetProperties() map[string]uint64
 
 	// DelProperty deletes the given property.
-	// Note: Deletion of a property DOES NOT trigger a change.
-	// It even deletes the property in filters at set listeners.
-	// Delete should be only used for cleanups. To simply update
+	// Deletion of a property does trigger a change. To simply update
 	// a property use the set Property method again. SetProperty overwrite
 	// any previous value. The property does not have to be deleted beforehand.
 	DelProperty(name string) error
@@ -147,10 +125,7 @@ type DocumentOps interface {
 	// outdated.
 	SetProperty(name string, rev uint64) error
 
-	// Delete deletes the whole document.
-	// Note: Deletion DOES NOT trigger a change.
-	// This method is here only for cleanup of not needed documents.
-	// This removes all filter usages of this document of all used listeners.
+	// Delete deletes the whole document. Deletion does trigger a change.
 	// Delete does an implicit Commit(). No additional operations are possible.
 	Delete() error
 
