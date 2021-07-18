@@ -41,25 +41,9 @@ DROP TABLE IF EXISTS `listener`;
 CREATE TABLE `listener` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `name` varbinary(1024) NOT NULL,
+  `docs` json NOT NULL,
   PRIMARY KEY (`id`),
   UNIQUE `name` (`name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
-/*!40101 SET character_set_client = @saved_cs_client */;
-
---
--- Table structure for table `listener_document`
---
-
-DROP TABLE IF EXISTS `listener_document`;
-/*!40101 SET @saved_cs_client     = @@character_set_client */;
-/*!50503 SET character_set_client = utf8mb4 */;
-CREATE TABLE `listener_document` (
-  `listener` bigint NOT NULL,
-  `document` bigint NOT NULL,
-  PRIMARY KEY (`listener`,`document`),
-  KEY `document` (`document`),
-  CONSTRAINT `fk_document_1` FOREIGN KEY (`document`) REFERENCES `document` (`id`) ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT `fk_listener_1` FOREIGN KEY (`listener`) REFERENCES `listener` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -109,3 +93,8 @@ CREATE TABLE `property` (
 /*!40101 SET CHARACTER_SET_RESULTS=@OLD_CHARACTER_SET_RESULTS */;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
+
+/* insert pre-defined data */
+
+INSERT INTO document (id, name, created) VALUES (-1, ':changed', 1);
+INSERT INTO property (id, name, document, revision) VALUES (-1, ':changed', -1, 9223372036854775807);

@@ -39,15 +39,16 @@ type Detector struct {
 	// needed prepared statements
 	stmtOpenDoc          *sql.Stmt
 	stmtDelDoc           *sql.Stmt
+	stmtDelDocConvert    *sql.Stmt
 	stmtInsertDoc        *sql.Stmt
 	stmtCreatedDoc       *sql.Stmt
-	stmtDelProperty      *sql.Stmt
+	stmtDelProp          *sql.Stmt
+	stmtDelPropConvert   *sql.Stmt
 	stmtGetProperties    *sql.Stmt
 	stmtInsertProperty   *sql.Stmt
 	stmtUpdateProperty   *sql.Stmt
 	stmtNewListener      *sql.Stmt
 	stmtAddListenerProps *sql.Stmt
-	stmtAddListenerDocs  *sql.Stmt
 	stmtDelListener      *sql.Stmt
 	stmtNextChange       *sql.Stmt
 }
@@ -70,6 +71,7 @@ type mysqlDocProp struct {
 	name     string
 	revision uint64
 	changed  bool
+	deleted  bool
 }
 
 // mysqlChange is a found change, based
@@ -122,8 +124,14 @@ func (d *Detector) prepare() (err error) {
 		{Name: "del-doc", Target: &d.stmtDelDoc,
 			Query: "DELETE FROM document WHERE id = ?"},
 
-		{Name: "del-prop", Target: &d.stmtDelProperty,
+		{Name: "del-doc-convert", Target: &d.stmtDelDocConvert,
+			Query: "UPDATE listener_property SET property = -1, changed = 1 WHERE property IN (SELECT id FROM property WHERE document = ?)"},
+
+		{Name: "del-prop", Target: &d.stmtDelProp,
 			Query: "DELETE FROM property WHERE id = ?"},
+
+		{Name: "del-prop-convert", Target: &d.stmtDelPropConvert,
+			Query: "UPDATE listener_property SET property = -1, changed = 1 WHERE property = ?"},
 
 		{Name: "insert-prop", Target: &d.stmtInsertProperty,
 			Query: "INSERT INTO property (name, document, revision) VALUES (?,?,?)"},
@@ -137,7 +145,7 @@ func (d *Detector) prepare() (err error) {
 			SET p.revision = ?, lp.changed = lp.expected < ? WHERE p.id = ?`},
 
 		{Name: "insert-listener", Target: &d.stmtNewListener,
-			Query: "INSERT INTO listener (name) VALUES (?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)"},
+			Query: "INSERT INTO listener (name, docs) VALUES (?, ?) ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id), docs = JSON_MERGE_PATCH(docs, VALUES(docs))"},
 
 		// adding listening props is complicated ... we have to lookup the document & property Ids
 		// and compare if the listener already should trigger. To do this, without complex dynamic generated
@@ -147,7 +155,7 @@ func (d *Detector) prepare() (err error) {
 		{Name: "add-listener-props", Target: &d.stmtAddListenerProps,
 			Query: `
 			INSERT INTO listener_property (listener, property, expected, changed)
-			(SELECT j.listener, prop.id, j.rev, (j.rev < prop.revision) FROM (
+			(SELECT j.listener, IFNULL(prop.id, -1), IFNULL(j.rev, 0), IFNULL(j.rev < prop.revision, 1) FROM (
 				SELECT * FROM JSON_TABLE(?, '$[*]' COLUMNS(
 				doc VARBINARY(1024) PATH '$.doc',
 				listener BIGINT PATH '$.listener',
@@ -155,35 +163,24 @@ func (d *Detector) prepare() (err error) {
 					prop VARBINARY(1024) PATH '$.prop',
 					rev BIGINT PATH '$.rev'
 				))) AS x) AS j
-			JOIN document doc ON doc.name = j.doc
-			JOIN property prop ON prop.document = doc.id AND prop.name = j.prop FOR SHARE)
+			LEFT JOIN document doc ON doc.name = j.doc
+			LEFT JOIN property prop ON prop.document = doc.id AND prop.name = j.prop FOR SHARE)
 			ON DUPLICATE KEY UPDATE expected = LEAST(VALUES(expected), expected), changed = (VALUES(changed) OR changed)
 			`},
-
-		{Name: "add-listener-docs", Target: &d.stmtAddListenerDocs,
-			Query: `
-			INSERT INTO listener_document (listener, document)
-			SELECT j.listener, doc.id FROM JSON_TABLE(?, '$[*]' COLUMNS(
-				doc VARCHAR(2048) PATH '$.doc',
-				listener BIGINT PATH '$.listener')
-			) AS j
-			JOIN document doc ON doc.name = j.doc
-			ON DUPLICATE KEY UPDATE document = document`,
-		},
 
 		{Name: "del-listener", Target: &d.stmtDelListener,
 			Query: "DELETE FROM listener WHERE name = ?"},
 
 		// This query finds the next change ... we have to LOCK the listener_property and
-		// the whole listener (by JOIN-ing the listener). With the lock we make sure that a concurent NextChange
+		// the whole listener. With the lock we make sure that a concurent NextChange
 		// skips this listener. Otherwise the same listener could be triggered multiples times,
-		// if multiple properties of the same listener changed at the same time
+		// if multiple properties of the same listener changed at the same time. Also, we have to
+		// do a "sub-query", a direct JOIN would lock unrelated changes.
 		{Name: "nxt-change", Target: &d.stmtNextChange,
-			Query: `
-			SELECT l.id, l.name, 
-				(SELECT GROUP_CONCAT(d.name) FROM listener_document ld JOIN document d ON d.id = ld.document AND created = 1 WHERE ld.listener = l.id FOR SHARE) docs
-			FROM listener_property lp JOIN listener l ON l.id = lp.listener
-			WHERE lp.changed = 1 LIMIT 1 FOR UPDATE SKIP LOCKED`},
+			Query: `SELECT l.id, l.name, JSON_KEYS(l.docs) AS docs FROM 
+					(SELECT * FROM listener_property WHERE changed = 1 LIMIT 1 FOR UPDATE SKIP LOCKED) lp
+					JOIN listener l ON l.id = lp.listener FOR UPDATE SKIP LOCKED
+					`},
 
 		{Name: "doc-created", Target: &d.stmtCreatedDoc,
 			Query: `UPDATE document SET created = 1 WHERE id = ?`},
@@ -211,10 +208,6 @@ func (d *Detector) OpenDocument(ctx context.Context, name string) (propchange.Do
 func (d *Detector) doOpenDocument(name string, tx *sql.Tx) (*mysqlOpenDoc, error) {
 	if len := len(name); len > MaxNameBytesLen {
 		return nil, &propchange.ErrTooLongName{Name: name, Len: len, MaxLen: MaxNameBytesLen}
-	}
-
-	if strings.Contains(name, ",") {
-		return nil, errInvalidName
 	}
 
 	// first try to open the doc ...
@@ -281,6 +274,12 @@ func (d *Detector) insertNewDoc(name string, tx *sql.Tx) (*mysqlOpenDoc, error) 
 
 // AddListener adds a new Listener. Like defined in the Detector interface
 func (d *Detector) AddListener(ctx context.Context, name string, filter []propchange.ChangeFilter) error {
+	if name == "" {
+		return propchange.ErrInvalidListenerName
+	}
+	if len(filter) == 0 {
+		return propchange.ErrEmptyFilter
+	}
 	if len := len(name); len > MaxNameBytesLen {
 		return &propchange.ErrTooLongName{Name: name, Len: len, MaxLen: MaxNameBytesLen}
 	}
@@ -302,7 +301,15 @@ func (d *Detector) AddListener(ctx context.Context, name string, filter []propch
 
 func (d *Detector) doAddListener(name string, filter []propchange.ChangeFilter, tx *sql.Tx) error {
 	// save the listener itself
-	res, err := tx.Stmt(d.stmtNewListener).Exec(name)
+	docsJSON := map[string]bool{}
+	for _, f := range filter {
+		docsJSON[f.Document] = true
+	}
+	docsJSONRaw, err := json.Marshal(docsJSON)
+	if err != nil {
+		return err
+	}
+	res, err := tx.Stmt(d.stmtNewListener).Exec(name, docsJSONRaw)
 	if err != nil {
 		return fmt.Errorf("Insert new listener failed: %w", err)
 	}
@@ -337,6 +344,10 @@ func (d *Detector) doAddListener(name string, filter []propchange.ChangeFilter, 
 			f.Properties = map[string]uint64{newDocProperty: 0}
 		}
 
+		if len(f.Properties) == 0 {
+			return propchange.ErrEmptyFilter
+		}
+
 		insertJSON[idx].Document = f.Document
 		insertJSON[idx].Listener = uint64(id)
 
@@ -357,12 +368,6 @@ func (d *Detector) doAddListener(name string, filter []propchange.ChangeFilter, 
 
 	// inster properties
 	_, err = tx.Stmt(d.stmtAddListenerProps).Exec(insertJSONRaw)
-	if err != nil {
-		return err
-	}
-
-	// assign docs
-	_, err = tx.Stmt(d.stmtAddListenerDocs).Exec(insertJSONRaw)
 	return err
 }
 
@@ -394,7 +399,7 @@ func (d *Detector) doNextChange(tx *sql.Tx) (propchange.OnChange, error) {
 
 	change := &mysqlChange{tx: tx, detector: d}
 
-	var docs string
+	var docs []byte
 	err := stmt.QueryRow().Scan(&change.listenerID, &change.listener, &docs)
 
 	if err != nil {
@@ -404,8 +409,10 @@ func (d *Detector) doNextChange(tx *sql.Tx) (propchange.OnChange, error) {
 		return nil, fmt.Errorf("can't read next change: %w", err)
 	}
 
-	// docs is simply a comma seperated list of documents
-	change.documents = strings.Split(docs, ",")
+	err = json.Unmarshal(docs, &change.documents)
+	if err != nil {
+		return nil, err
+	}
 
 	return change, nil
 }
@@ -431,6 +438,9 @@ func (m *mysqlOpenDoc) Commit() error {
 		return propchange.ErrDocAlreadyClosedError
 	}
 
+	m.closed = true
+	defer m.tx.Rollback()
+
 	if m.state != docStateExisting {
 		// the user created the document for the first time
 		if newProp := m.props[newDocProperty]; newProp != nil {
@@ -452,24 +462,41 @@ func (m *mysqlOpenDoc) Commit() error {
 
 	// apply changes now ...
 	stmt := m.tx.Stmt(m.detector.stmtUpdateProperty)
-	defer stmt.Close()
+	stmtDel := m.tx.Stmt(m.detector.stmtDelProp)
+	stmtDelConv := m.tx.Stmt(m.detector.stmtDelPropConvert)
+
 	for _, prop := range m.props {
 		if !prop.changed {
 			continue
 		}
+
+		if prop.deleted {
+			_, err := stmtDelConv.Exec(prop.id)
+			if err != nil {
+				return err
+			}
+			_, err = stmtDel.Exec(prop.id)
+			if err != nil {
+				return err
+			}
+			continue
+		}
+
 		// yes, rev twice ... mysql has cant use args twice
 		_, err := stmt.Exec(prop.revision, prop.revision, prop.id)
 		if err != nil {
-			m.closed = true
-			m.tx.Rollback()
 			return err
 		}
 	}
-	m.closed = true
+
 	return m.tx.Commit()
 }
 
 func (m *mysqlOpenDoc) DelProperty(name string) error {
+	if name == "" || strings.HasPrefix(name, ":") {
+		return propchange.ErrInvalidPropertyName(name)
+	}
+
 	m.m.Lock()
 	defer m.m.Unlock()
 	if m.closed {
@@ -482,14 +509,8 @@ func (m *mysqlOpenDoc) DelProperty(name string) error {
 		return nil
 	}
 
-	stmt := m.tx.Stmt(m.detector.stmtDelProperty)
-	defer stmt.Close()
-
-	_, err := stmt.Exec(prop.id)
-	if err != nil {
-		return err
-	}
-	delete(m.props, name)
+	prop.deleted = true
+	prop.changed = true
 	return nil
 }
 
@@ -500,16 +521,26 @@ func (m *mysqlOpenDoc) Delete() error {
 		return propchange.ErrDocAlreadyClosedError
 	}
 
-	stmt := m.tx.Stmt(m.detector.stmtDelDoc)
-	defer stmt.Close()
+	m.closed = true
+	defer m.tx.Rollback()
 
-	_, err := stmt.Exec(m.docID)
+	if m.state != docStateExisting {
+		// doc does not exists for real.
+		return nil
+	}
+
+	// trigger listeners that listen for this doc props
+	_, err := m.tx.Stmt(m.detector.stmtDelDocConvert).Exec(m.docID)
+	if err != nil {
+		return err
+	}
+
+	_, err = m.tx.Stmt(m.detector.stmtDelDoc).Exec(m.docID)
 	if err != nil {
 		return err
 	}
 
 	// delete does an implicit commit
-	m.closed = true
 	return m.tx.Commit()
 }
 
@@ -519,14 +550,16 @@ func (m *mysqlOpenDoc) GetProperties() map[string]uint64 {
 
 	props := map[string]uint64{}
 	for p, v := range m.props {
-		props[p] = v.revision
+		if !strings.HasPrefix(p, ":") && !v.deleted {
+			props[p] = v.revision
+		}
 	}
 	return props
 }
 
 func (m *mysqlOpenDoc) SetProperty(name string, rev uint64) error {
-	if strings.HasPrefix(name, ":") {
-		return errInvalidName
+	if name == "" || strings.HasPrefix(name, ":") {
+		return propchange.ErrInvalidPropertyName(name)
 	}
 	if len := len(name); len > MaxNameBytesLen {
 		return &propchange.ErrTooLongName{Name: name, Len: len, MaxLen: MaxNameBytesLen}
@@ -542,7 +575,8 @@ func (m *mysqlOpenDoc) SetProperty(name string, rev uint64) error {
 	if prop == nil {
 		return m.newProperty(name, rev)
 	}
-	if prop.revision == rev {
+	prop.deleted = false
+	if prop.revision >= rev {
 		// value is already the same ... do nothing
 		return nil
 	}
