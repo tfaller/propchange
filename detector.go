@@ -6,6 +6,8 @@ import (
 	"fmt"
 )
 
+type ErrInvalidPropertyName string
+
 // ErrDocAlreadyClosedError indicates that the operation failed
 // because the document was already closed.
 var ErrDocAlreadyClosedError = errors.New("doc was already closed")
@@ -159,6 +161,10 @@ type DocumentOps interface {
 	// Close closes the document without committing any changes.
 	// No additional operations are possible.
 	Close() error
+}
+
+func (e ErrInvalidPropertyName) Error() string {
+	return fmt.Sprintf("%q is an invalid property name", string(e))
 }
 
 // ErrTooLongName is here to indicate that a document,

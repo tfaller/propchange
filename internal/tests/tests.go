@@ -41,7 +41,8 @@ func TestBasicChange(detector propchange.Detector, t *testing.T) {
 	}
 
 	// invalid property name
-	assert.Error(t, doc.SetProperty("", 0))
+	err = propchange.ErrInvalidPropertyName("")
+	assert.ErrorAs(t, doc.SetProperty("", 0), &err)
 
 	assert.NoError(t, doc.Commit())
 

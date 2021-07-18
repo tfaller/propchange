@@ -2,7 +2,6 @@ package mem
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/tfaller/propchange"
@@ -379,7 +378,7 @@ func (o *openDoc) SetProperty(name string, rev uint64) error {
 		return propchange.ErrDocAlreadyClosedError
 	}
 	if name == "" {
-		return fmt.Errorf("empty string is not a valid property name")
+		return propchange.ErrInvalidPropertyName(name)
 	}
 	if _, wasDel := o.propsDel[name]; wasDel {
 		delete(o.propsDel, name)
