@@ -435,7 +435,7 @@ func (m *mysqlOpenDoc) Close() error {
 	m.m.Lock()
 	defer m.m.Unlock()
 	if m.closed {
-		return propchange.ErrDocAlreadyClosedError
+		return propchange.ErrDocAlreadyClosed
 	}
 
 	m.closed = true
@@ -448,7 +448,7 @@ func (m *mysqlOpenDoc) Commit() error {
 	m.m.Lock()
 	defer m.m.Unlock()
 	if m.closed {
-		return propchange.ErrDocAlreadyClosedError
+		return propchange.ErrDocAlreadyClosed
 	}
 
 	m.closed = true
@@ -513,7 +513,7 @@ func (m *mysqlOpenDoc) DelProperty(name string) error {
 	m.m.Lock()
 	defer m.m.Unlock()
 	if m.closed {
-		return propchange.ErrDocAlreadyClosedError
+		return propchange.ErrDocAlreadyClosed
 	}
 
 	prop := m.props[name]
@@ -531,7 +531,7 @@ func (m *mysqlOpenDoc) Delete() error {
 	m.m.Lock()
 	defer m.m.Unlock()
 	if m.closed {
-		return propchange.ErrDocAlreadyClosedError
+		return propchange.ErrDocAlreadyClosed
 	}
 
 	m.closed = true
@@ -581,7 +581,7 @@ func (m *mysqlOpenDoc) SetProperty(name string, rev uint64) error {
 	m.m.Lock()
 	defer m.m.Unlock()
 	if m.closed {
-		return propchange.ErrDocAlreadyClosedError
+		return propchange.ErrDocAlreadyClosed
 	}
 
 	prop := m.props[name]

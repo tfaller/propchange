@@ -8,9 +8,9 @@ import (
 
 type ErrInvalidPropertyName string
 
-// ErrDocAlreadyClosedError indicates that the operation failed
+// ErrDocAlreadyClosed indicates that the operation failed
 // because the document was already closed.
-var ErrDocAlreadyClosedError = errors.New("doc was already closed")
+var ErrDocAlreadyClosed = errors.New("doc was already closed")
 
 // ErrNoMoreChanges indicates that no more changes were found
 var ErrNoMoreChanges = errors.New("no more new changes found")

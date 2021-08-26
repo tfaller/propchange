@@ -113,11 +113,11 @@ func TestUsedCloseDoc(detector propchange.Detector, t *testing.T) {
 	for _, closeMethod := range docCloseMethods {
 		doc := closeMethod()
 
-		assert.ErrorIs(t, propchange.ErrDocAlreadyClosedError, doc.SetProperty("a", 0))
-		assert.ErrorIs(t, propchange.ErrDocAlreadyClosedError, doc.DelProperty("a"))
-		assert.ErrorIs(t, propchange.ErrDocAlreadyClosedError, doc.Close())
-		assert.ErrorIs(t, propchange.ErrDocAlreadyClosedError, doc.Commit())
-		assert.ErrorIs(t, propchange.ErrDocAlreadyClosedError, doc.Delete())
+		assert.ErrorIs(t, propchange.ErrDocAlreadyClosed, doc.SetProperty("a", 0))
+		assert.ErrorIs(t, propchange.ErrDocAlreadyClosed, doc.DelProperty("a"))
+		assert.ErrorIs(t, propchange.ErrDocAlreadyClosed, doc.Close())
+		assert.ErrorIs(t, propchange.ErrDocAlreadyClosed, doc.Commit())
+		assert.ErrorIs(t, propchange.ErrDocAlreadyClosed, doc.Delete())
 	}
 }
 

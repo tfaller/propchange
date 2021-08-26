@@ -282,7 +282,7 @@ func (m *mem) addChange(l *listener) {
 
 func (o *openDoc) Close() error {
 	if o.doc == nil {
-		return propchange.ErrDocAlreadyClosedError
+		return propchange.ErrDocAlreadyClosed
 	}
 
 	o.doc.m.Unlock()
@@ -292,7 +292,7 @@ func (o *openDoc) Close() error {
 
 func (o *openDoc) Commit() error {
 	if o.doc == nil {
-		return propchange.ErrDocAlreadyClosedError
+		return propchange.ErrDocAlreadyClosed
 	}
 
 	if !o.doc.exists {
@@ -348,7 +348,7 @@ func (o *openDoc) GetProperties() map[string]uint64 {
 
 func (o *openDoc) DelProperty(name string) error {
 	if o.doc == nil {
-		return propchange.ErrDocAlreadyClosedError
+		return propchange.ErrDocAlreadyClosed
 	}
 	delete(o.props, name)
 	o.propsDel[name] = struct{}{}
@@ -357,7 +357,7 @@ func (o *openDoc) DelProperty(name string) error {
 
 func (d *openDoc) Delete() error {
 	if d.doc == nil {
-		return propchange.ErrDocAlreadyClosedError
+		return propchange.ErrDocAlreadyClosed
 	}
 	defer d.doc.m.Unlock()
 
@@ -385,7 +385,7 @@ func (o *openDoc) IsNew() bool {
 
 func (o *openDoc) SetProperty(name string, rev uint64) error {
 	if o.doc == nil {
-		return propchange.ErrDocAlreadyClosedError
+		return propchange.ErrDocAlreadyClosed
 	}
 	if name == "" {
 		return propchange.ErrInvalidPropertyName(name)
