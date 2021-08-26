@@ -3,6 +3,9 @@ package tests
 import (
 	"context"
 	"fmt"
+	"runtime"
+	"runtime/debug"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +26,7 @@ func TestSuite(detector propchange.Detector, t *testing.T) {
 	t.Run("TestListenerMultiDelete", func(t *testing.T) { TestListenerMultiDelete(detector, t) })
 	t.Run("TestListenerDocNotExisting", func(t *testing.T) { TestListenerDocNotExisting(detector, t) })
 	t.Run("TestListenerPropNotExisting", func(t *testing.T) { TestListenerPropNotExisting(detector, t) })
+	t.Run("TestListenerNameReuse", func(t *testing.T) { TestListenerNameReuse(detector, t) })
 	t.Run("TestNewDocument", func(t *testing.T) { TestNewDocument(detector, t) })
 	t.Run("TestAbortNewDocument", func(t *testing.T) { TestAbortNewDocument(detector, t) })
 	t.Run("TestAbortChange", func(t *testing.T) { TestAbortChange(detector, t) })
@@ -538,6 +542,99 @@ func TestListenerPropNotExisting(detector propchange.Detector, t *testing.T) {
 	assertChange(t, change, "listener-prop", []string{docName})
 	assert.NoError(t, change.Commit())
 
+	assertNoChange(t, ctx, detector)
+}
+
+func TestListenerNameReuse(detector propchange.Detector, t *testing.T) {
+	// Disable gc for this test.
+	// We basically want to test whether a race condition could
+	// break the listener reuse. For that we want to make the test and
+	// environment more deterministic ... however it is still possible
+	// that we hit not each time the wanted race condition :(
+	gcPercent := debug.SetGCPercent(-1)
+	defer func() { debug.SetGCPercent(gcPercent) }()
+
+	ctx := context.TODO()
+	startTime := time.Now()
+	listenerName := fmt.Sprintf("l-reuse-%v", time.Now().UnixNano())
+	docNameA, docNameB := "la", "lb"
+
+	// basic test doc
+	doc := assertOpenNewDoc(t, ctx, detector, docNameA)
+	assert.NoError(t, doc.SetProperty("a", 1))
+	assert.NoError(t, doc.Commit())
+
+	doc = assertOpenNewDoc(t, ctx, detector, docNameB)
+	assert.NoError(t, doc.SetProperty("a", 1))
+	assert.NoError(t, doc.Commit())
+
+	assertNoChange(t, ctx, detector)
+
+	// reuse the same listener name directly after each other
+	for i := 0; i < 2; i++ {
+		// add a listener which triggers
+		assert.NoError(t, detector.AddListener(ctx, listenerName, []propchange.ChangeFilter{{Document: docNameA, Properties: map[string]uint64{"a": 0}}}))
+
+		change, err := detector.NextChange(ctx)
+		assert.NoError(t, err)
+		assertChange(t, change, listenerName, []string{docNameA})
+		assert.NoError(t, change.Commit())
+
+		assertNoChange(t, ctx, detector)
+	}
+
+	// now reuse a listener which is currently "open"
+	assert.NoError(t, detector.AddListener(ctx, listenerName, []propchange.ChangeFilter{{Document: docNameA, Properties: map[string]uint64{"a": 0}}}))
+
+	change, err := detector.NextChange(ctx)
+	assertChange(t, change, listenerName, []string{docNameA})
+	assert.NoError(t, err)
+
+	stopTime := time.Now()
+
+	// Update / reuse a open listener.
+	// Do this in a goroutine because it might block.
+	// This is where the non determinism is ... the following "AddListener"
+	// might be blocked because the listener is already open ... or it is stuck
+	// somewere else -> which breaks the test. We can't know.
+	// If we wait a bit, the possibility is high that it is block at the right spot.
+	addListenerStarted := sync.WaitGroup{}
+	addListenerStarted.Add(1)
+
+	addListenerFinished := sync.WaitGroup{}
+	addListenerFinished.Add(1)
+	go func() {
+		// don't allow another goroutine to run in this process
+		// this increases the chance that the listener will block a the right spot
+		runtime.LockOSThread()
+		addListenerStarted.Done()
+
+		assert.NoError(t, detector.AddListener(ctx, listenerName, []propchange.ChangeFilter{{Document: docNameB, Properties: map[string]uint64{"a": 0}}}))
+
+		addListenerFinished.Done()
+	}()
+
+	addListenerStarted.Wait()
+
+	// wait some sensible amount of time
+	time.Sleep(stopTime.Sub(startTime) * 10)
+
+	// commit change ... second reused listener should not
+	// be cancalled by that.
+	assert.NoError(t, change.Commit())
+
+	addListenerFinished.Wait()
+
+	change, err = detector.NextChange(ctx)
+	assert.NoError(t, err)
+	assert.Equal(t, listenerName, change.Listener())
+	assert.Contains(t, change.Documents(), docNameB)
+	// technically the listener should only contain "docNameB"
+	// but because we reused / updated a listener "docNameA" is also allowed
+	assert.Subset(t, []string{docNameA, docNameB}, change.Documents())
+	assert.NoError(t, change.Commit())
+
+	// cleanup
 	assertNoChange(t, ctx, detector)
 }
 

@@ -199,21 +199,31 @@ func (m *mem) OpenDocument(ctx context.Context, name string) (propchange.Documen
 
 func (m *mem) getOrCreateListener(name string) *listener {
 	m.mListeners.Lock()
-	defer m.mListeners.Unlock()
-
-	l := m.listeners[name]
-
-	if l == nil {
-		l = &listener{
-			name:  name,
-			docs:  map[string]struct{}{},
-			props: map[*prop]*listenerChain{},
+	for {
+		l := m.listeners[name]
+		if l == nil {
+			l = &listener{
+				name:  name,
+				docs:  map[string]struct{}{},
+				props: map[*prop]*listenerChain{},
+			}
+			m.listeners[name] = l
 		}
-		m.listeners[name] = l
-	}
 
-	l.m.Lock()
-	return l
+		m.mListeners.Unlock()
+		l.m.Lock()
+
+		// check whether listener got not deleted
+		m.mListeners.Lock()
+		if m.listeners[name] != l {
+			// was deleted ... grab a new listener
+			l.m.Unlock()
+			continue
+		}
+
+		m.mListeners.Unlock()
+		return l
+	}
 }
 
 func (m *mem) getAndRemoveListener(name string) *listener {
@@ -410,6 +420,7 @@ func (o *openChange) Commit() error {
 	o.mem.mChanges.Unlock()
 
 	o.listener.delete()
+	o.listener.m.Unlock()
 
 	return nil
 }

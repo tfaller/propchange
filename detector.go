@@ -53,8 +53,6 @@ type Detector interface {
 	// is simply "appended" to the already existing listener. So if the existing listener
 	// listened to doc "A", and the "new" listener filtered for doc "B", the updated
 	// listener listens for document "A" and "B".
-	// Important: A listener name should never be reused after it triggered a change.
-	// This could lead to unexpected behavior, depanding on the backend.
 	// If a document or property does not exist, the listener will get instantly triggered.
 	// This is because the property or document maybe existed, but got deleted in the meantime.
 	// If it's known that a document does not exist, instead of listening for properties, the

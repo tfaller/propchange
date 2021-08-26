@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/tfaller/go-sqlprepare"
 	"github.com/tfaller/propchange"
 )
@@ -284,6 +285,9 @@ func (d *Detector) AddListener(ctx context.Context, name string, filter []propch
 		return &propchange.ErrTooLongName{Name: name, Len: len, MaxLen: MaxNameBytesLen}
 	}
 
+retry:
+	try := 1
+
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("Can't open transaction: %w", err)
@@ -294,6 +298,15 @@ func (d *Detector) AddListener(ctx context.Context, name string, filter []propch
 		if rbErr := tx.Rollback(); rbErr != nil {
 			err = fmt.Errorf("Rollback failed with %q for error: %w", rbErr, err)
 		}
+
+		mysqlErr := &mysql.MySQLError{}
+		if errors.As(err, &mysqlErr) && mysqlErr.Number == 1213 && try < 2 {
+			// deadlock error, this can happen if we access an existing listener
+			// which was already triggered and will be now deleted ... rare case
+			try++
+			goto retry
+		}
+
 		return err
 	}
 	return tx.Commit()
