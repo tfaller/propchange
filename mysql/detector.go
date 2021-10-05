@@ -199,7 +199,7 @@ func (d *Detector) prepare() (err error) {
 func (d *Detector) OpenDocument(ctx context.Context, name string) (propchange.DocumentOps, error) {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, fmt.Errorf("Cant open transaction: %w", err)
+		return nil, fmt.Errorf("can't open transaction: %w", err)
 	}
 
 	// perform the action in a newly created tx.
@@ -227,7 +227,7 @@ func (d *Detector) doOpenDocument(name string, tx *sql.Tx) (*mysqlOpenDoc, error
 	}
 
 	if !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("Can't open document: %w", err)
+		return nil, fmt.Errorf("can't open document: %w", err)
 	}
 
 	// the doc is new ... create it
@@ -297,13 +297,13 @@ retry:
 
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("Can't open transaction: %w", err)
+		return fmt.Errorf("can't open transaction: %w", err)
 	}
 
 	err = d.doAddListener(name, filter, tx)
 	if err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
-			err = fmt.Errorf("Rollback failed with %q for error: %w", rbErr, err)
+			err = fmt.Errorf("rollback failed with %q for error: %w", rbErr, err)
 		}
 
 		mysqlErr := &mysql.MySQLError{}
@@ -331,7 +331,7 @@ func (d *Detector) doAddListener(name string, filter []propchange.ChangeFilter, 
 	}
 	res, err := tx.Stmt(d.stmtNewListener).Exec(name, docsJSONRaw)
 	if err != nil {
-		return fmt.Errorf("Insert new listener failed: %w", err)
+		return fmt.Errorf("insert new listener failed: %w", err)
 	}
 	id, err := res.LastInsertId()
 	if err != nil {
