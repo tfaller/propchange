@@ -30,8 +30,6 @@ const (
 	docStateExisting = 2
 )
 
-var errInvalidName = errors.New("invalid name")
-
 // Detector implements the Detector with
 // a MySQL > 8.0.4 backend
 type Detector struct {
