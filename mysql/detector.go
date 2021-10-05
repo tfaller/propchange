@@ -259,6 +259,10 @@ func (d *Detector) tryOpenDoc(name string, tx *sql.Tx) (*mysqlOpenDoc, error) {
 		props[prop.name] = prop
 	}
 
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("can't read all properties: %w", err)
+	}
+
 	state := docStateExisting
 	if newProp := props[newDocProperty]; newProp.revision == 0 {
 		state = docStateExistingNew
