@@ -27,6 +27,7 @@ func TestSuite(detector propchange.Detector, t *testing.T) {
 	t.Run("TestListenerDocNotExisting", func(t *testing.T) { TestListenerDocNotExisting(detector, t) })
 	t.Run("TestListenerPropNotExisting", func(t *testing.T) { TestListenerPropNotExisting(detector, t) })
 	t.Run("TestListenerNameReuse", func(t *testing.T) { TestListenerNameReuse(detector, t) })
+	t.Run("TestGetListener", func(t *testing.T) { TestGetListener(detector, t) })
 	t.Run("TestNewDocument", func(t *testing.T) { TestNewDocument(detector, t) })
 	t.Run("TestAbortNewDocument", func(t *testing.T) { TestAbortNewDocument(detector, t) })
 	t.Run("TestAbortChange", func(t *testing.T) { TestAbortChange(detector, t) })
@@ -636,6 +637,118 @@ func TestListenerNameReuse(detector propchange.Detector, t *testing.T) {
 
 	// cleanup
 	assertNoChange(t, ctx, detector)
+}
+
+func TestGetListener(detector propchange.Detector, t *testing.T) {
+	ctx := context.TODO()
+	docName := fmt.Sprintf("getlistener-%v", time.Now().UnixNano())
+	errListenerDoesNotExist := propchange.ErrListenerDoesNotExist("")
+
+	// simple non existing listener
+	filter, err := detector.GetListener(ctx, "404")
+	assert.ErrorAs(t, err, &errListenerDoesNotExist)
+	assert.Equal(t, "404", string(errListenerDoesNotExist))
+	assert.Nil(t, filter)
+
+	// simple test case doc
+	doc := assertOpenNewDoc(t, ctx, detector, docName)
+	assert.NoError(t, doc.SetProperty("first", 1))
+	assert.NoError(t, doc.Commit())
+
+	// simple listener with two props
+	simpleFilter := []propchange.ChangeFilter{
+		{Document: docName, Properties: map[string]uint64{"first": 1}},
+		{Document: docName + "2", NewDocument: true},
+	}
+	assert.NoError(t, detector.AddListener(ctx, docName+"l1", simpleFilter))
+
+	filter, err = detector.GetListener(ctx, docName+"l1")
+	assert.NoError(t, err)
+	assert.ElementsMatch(t, simpleFilter, filter)
+
+	// trigger the listener ... it MIGHT return the listener
+	doc, err = detector.OpenDocument(ctx, docName)
+	assert.NoError(t, err)
+	assert.NoError(t, doc.SetProperty("first", 2))
+	assert.NoError(t, doc.Commit())
+
+	change, err := detector.NextChange(ctx)
+	assert.NoError(t, err)
+	assertChange(t, change, docName+"l1", []string{docName, docName + "2"})
+
+	filter, err = detector.GetListener(ctx, docName+"l1")
+	if err != nil {
+		// we did not get the listener
+		assert.ErrorAs(t, err, &errListenerDoesNotExist)
+		assert.Equal(t, docName+"l1", string(errListenerDoesNotExist))
+	} else {
+		// we actually got the listener again
+		assert.ElementsMatch(t, simpleFilter, filter)
+	}
+
+	assert.NoError(t, change.Commit())
+	assertNoChange(t, ctx, detector)
+
+	// delete property and get listener
+	assert.NoError(t, detector.AddListener(ctx, docName, []propchange.ChangeFilter{{Document: docName, Properties: map[string]uint64{"first": 2}}}))
+	assertNoChange(t, ctx, detector)
+	doc, err = detector.OpenDocument(ctx, docName)
+	assert.NoError(t, err)
+	assert.NoError(t, doc.DelProperty("first"))
+	assert.NoError(t, doc.Commit())
+
+	filter, err = detector.GetListener(ctx, docName)
+	if err != nil {
+		// we did not get the listener
+		assert.ErrorAs(t, err, &errListenerDoesNotExist)
+		assert.Equal(t, docName, string(errListenerDoesNotExist))
+	} else {
+		// we actually got the listener again
+		assert.Len(t, filter, 1)
+		assert.Equal(t, docName, filter[0].Document)
+		assert.False(t, filter[0].NewDocument)
+		if len(filter[0].Properties) > 0 {
+			assert.Equal(t, map[string]uint64{"first": 2}, filter[0].Properties)
+		}
+	}
+
+	change, err = detector.NextChange(ctx)
+	assert.NoError(t, err)
+	assertChange(t, change, docName, []string{docName})
+	assert.NoError(t, change.Commit())
+
+	// delete doc and get listener
+	doc, err = detector.OpenDocument(ctx, docName)
+	assert.NoError(t, err)
+	assert.NoError(t, doc.SetProperty("b", 1))
+	assert.NoError(t, doc.Commit())
+
+	assert.NoError(t, detector.AddListener(ctx, docName, []propchange.ChangeFilter{{Document: docName, Properties: map[string]uint64{"b": 1}}}))
+	assertNoChange(t, ctx, detector)
+
+	doc, err = detector.OpenDocument(ctx, docName)
+	assert.NoError(t, err)
+	assert.NoError(t, doc.Delete())
+
+	filter, err = detector.GetListener(ctx, docName)
+	if err != nil {
+		// we did not get the listener
+		assert.ErrorAs(t, err, &errListenerDoesNotExist)
+		assert.Equal(t, docName, string(errListenerDoesNotExist))
+	} else if len(filter) > 0 {
+		// we actually got the listener again
+		assert.Len(t, filter, 1)
+		assert.Equal(t, docName, filter[0].Document)
+		assert.False(t, filter[0].NewDocument)
+		if len(filter[0].Properties) > 0 {
+			assert.Equal(t, map[string]uint64{"b": 1}, filter[0].Properties)
+		}
+	}
+
+	change, err = detector.NextChange(ctx)
+	assert.NoError(t, err)
+	assertChange(t, change, docName, []string{docName})
+	assert.NoError(t, change.Commit())
 }
 
 func TestNewDocument(detector propchange.Detector, t *testing.T) {

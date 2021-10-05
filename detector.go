@@ -8,6 +8,8 @@ import (
 
 type ErrInvalidPropertyName string
 
+type ErrListenerDoesNotExist string
+
 // ErrDocAlreadyClosed indicates that the operation failed
 // because the document was already closed.
 var ErrDocAlreadyClosed = errors.New("doc was already closed")
@@ -60,6 +62,12 @@ type Detector interface {
 	// the document or for properties. This is because the filter would always trigger right away
 	// if the document already exists.
 	AddListener(ctx context.Context, name string, filter []ChangeFilter) error
+
+	// GetListener gets the filter that represents a given listener. This function is basically there
+	// to check whether a listener / filter exists. The returned filter might not represent the full
+	// added filter. This can happen if a listener listens to non existing properties or documents.
+	// Also, an already triggered listener might be returned as not existing.
+	GetListener(ctx context.Context, name string) ([]ChangeFilter, error)
 
 	// DelListener deletes a given listener. If the listeners does not exist, it is silently ignored.
 	DelListener(ctx context.Context, listener string) error
@@ -138,6 +146,10 @@ type DocumentOps interface {
 
 func (e ErrInvalidPropertyName) Error() string {
 	return fmt.Sprintf("%q is an invalid property name", string(e))
+}
+
+func (e ErrListenerDoesNotExist) Error() string {
+	return fmt.Sprintf("listener %q does not exist", string(e))
 }
 
 // ErrTooLongName is here to indicate that a document,

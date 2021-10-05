@@ -28,6 +28,8 @@ type doc struct {
 // prop is a property of a doc
 type prop struct {
 	m         sync.Mutex
+	doc       *doc
+	name      string
 	revision  uint64
 	listeners *listenerChain
 }
@@ -161,6 +163,58 @@ func (m *mem) AddListener(ctx context.Context, name string, filter []propchange.
 	}
 
 	return nil
+}
+
+func (m *mem) GetListener(ctx context.Context, name string) ([]propchange.ChangeFilter, error) {
+	m.mListeners.Lock()
+	l := m.listeners[name]
+	m.mListeners.Unlock()
+
+	if l == nil {
+		return nil, propchange.ErrListenerDoesNotExist(name)
+	}
+
+	m.mChanges.Lock()
+	_, existChange := m.changes[l]
+	m.mChanges.Unlock()
+
+	if existChange {
+		// Was already triggered ... pretend that the listener does not exist.
+		return nil, propchange.ErrListenerDoesNotExist(name)
+	}
+
+	l.m.Lock()
+	defer l.m.Unlock()
+
+	filterByDoc := map[string]propchange.ChangeFilter{}
+
+	for prop, listen := range l.props {
+		filter := filterByDoc[prop.doc.name]
+
+		if filter.Document == "" {
+			filter.Document = prop.doc.name
+		}
+
+		if prop.name == "" {
+			// special new doc listener property
+			filter.NewDocument = true
+		} else {
+			if filter.Properties == nil {
+				filter.Properties = map[string]uint64{}
+			}
+			filter.Properties[prop.name] = listen.revision
+		}
+
+		filterByDoc[prop.doc.name] = filter
+	}
+
+	filter := make([]propchange.ChangeFilter, 0, len(filterByDoc))
+
+	for _, changeFilter := range filterByDoc {
+		filter = append(filter, changeFilter)
+	}
+
+	return filter, nil
 }
 
 func (m *mem) DelListener(ctx context.Context, name string) error {
@@ -445,7 +499,7 @@ func (d *doc) getOrCreateProp(name string) *prop {
 	p := d.props[name]
 
 	if p == nil {
-		p = &prop{}
+		p = &prop{doc: d, name: name}
 		d.props[name] = p
 	}
 

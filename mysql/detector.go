@@ -50,6 +50,7 @@ type Detector struct {
 	stmtUpdateProperty   *sql.Stmt
 	stmtNewListener      *sql.Stmt
 	stmtAddListenerProps *sql.Stmt
+	stmtGetListener      *sql.Stmt
 	stmtDelListener      *sql.Stmt
 	stmtNextChange       *sql.Stmt
 }
@@ -168,6 +169,14 @@ func (d *Detector) prepare() (err error) {
 			LEFT JOIN property prop ON prop.document = doc.id AND prop.name = j.prop FOR SHARE)
 			ON DUPLICATE KEY UPDATE expected = LEAST(VALUES(expected), expected), changed = (VALUES(changed) OR changed)
 			`},
+
+		{Name: "get-listener", Target: &d.stmtGetListener,
+			Query: `SELECT d.name, p.name, lp.expected FROM listener l
+					JOIN listener_property lp ON lp.listener = l.id
+					JOIN property p ON p.id = lp.property
+					JOIN document d ON d.id = p.document
+					WHERE l.name = ?
+					ORDER BY d.id`},
 
 		{Name: "del-listener", Target: &d.stmtDelListener,
 			Query: "DELETE FROM listener WHERE name = ?"},
@@ -382,6 +391,56 @@ func (d *Detector) doAddListener(name string, filter []propchange.ChangeFilter, 
 	// inster properties
 	_, err = tx.Stmt(d.stmtAddListenerProps).Exec(insertJSONRaw)
 	return err
+}
+
+func (d *Detector) GetListener(ctx context.Context, listener string) ([]propchange.ChangeFilter, error) {
+	row, err := d.stmtGetListener.QueryContext(ctx, listener)
+	if err != nil {
+		return nil, err
+	}
+	defer row.Close()
+
+	filters := []propchange.ChangeFilter{}
+	currentFilter := (*propchange.ChangeFilter)(nil)
+
+	var docName, propName string
+	var propExpectedRev uint64
+
+	for row.Next() {
+		err = row.Scan(&docName, &propName, &propExpectedRev)
+		if err != nil {
+			return nil, err
+		}
+
+		if strings.HasPrefix(docName, ":") {
+			// internal document
+			continue
+		}
+
+		if currentFilter == nil || currentFilter.Document != docName {
+			filters = append(filters, propchange.ChangeFilter{Document: docName})
+			currentFilter = &filters[len(filters)-1]
+		}
+
+		if propName == newDocProperty {
+			currentFilter.NewDocument = true
+		} else {
+			if currentFilter.Properties == nil {
+				currentFilter.Properties = map[string]uint64{}
+			}
+			currentFilter.Properties[propName] = propExpectedRev
+		}
+	}
+
+	if err = row.Err(); err != nil {
+		return nil, err
+	}
+
+	if len(filters) == 0 {
+		return nil, propchange.ErrListenerDoesNotExist(listener)
+	}
+
+	return filters, nil
 }
 
 // DelListener deletes a listener as specified by the Detector service
