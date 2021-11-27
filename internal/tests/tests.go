@@ -126,33 +126,41 @@ func TestDelDocument(detector propchange.Detector, t *testing.T) {
 	ctx := context.TODO()
 
 	// first test when doc listener exists for existing doc
+	simpleTestCase := []map[string]uint64{
+		{"a": 1},         // this with one prop
+		{"a": 1, "b": 1}, // this with two props
+	}
 
-	doc := assertOpenNewDoc(t, ctx, detector, "doc")
-	assert.NoError(t, doc.SetProperty("a", 1))
-	assert.Equal(t, map[string]uint64{"a": 1}, doc.GetProperties())
-	assert.NoError(t, doc.Commit())
+	for _, testCase := range simpleTestCase {
+		doc := assertOpenNewDoc(t, ctx, detector, "doc")
+		for prop := range testCase {
+			assert.NoError(t, doc.SetProperty(prop, 1))
+		}
+		assert.Equal(t, testCase, doc.GetProperties())
+		assert.NoError(t, doc.Commit())
 
-	assert.NoError(t, detector.AddListener(ctx, "listener", []propchange.ChangeFilter{{Document: "doc", Properties: map[string]uint64{"a": 1}}}))
-	assertNoChange(t, ctx, detector)
+		assert.NoError(t, detector.AddListener(ctx, "listener", []propchange.ChangeFilter{{Document: "doc", Properties: testCase}}))
+		assertNoChange(t, ctx, detector)
 
-	// delete document ...
-	doc, err := detector.OpenDocument(ctx, "doc")
-	assert.NoError(t, err)
-	assert.NotNil(t, doc)
-	assert.False(t, doc.IsNew())
-	assert.NoError(t, doc.Delete())
+		// delete document ...
+		doc, err := detector.OpenDocument(ctx, "doc")
+		assert.NoError(t, err)
+		assert.NotNil(t, doc)
+		assert.False(t, doc.IsNew())
+		assert.NoError(t, doc.Delete())
 
-	// doc should not exists anymore
-	assertDocNotExists(t, ctx, detector, "doc")
+		// doc should not exists anymore
+		assertDocNotExists(t, ctx, detector, "doc")
 
-	// change should trigger
-	change, err := detector.NextChange(ctx)
-	assert.NoError(t, err)
-	assertChange(t, change, "listener", []string{"doc"})
-	assert.NoError(t, change.Commit())
+		// change should trigger
+		change, err := detector.NextChange(ctx)
+		assert.NoError(t, err)
+		assertChange(t, change, "listener", []string{"doc"})
+		assert.NoError(t, change.Commit())
 
-	// no more changes
-	assertNoChange(t, ctx, detector)
+		// no more changes
+		assertNoChange(t, ctx, detector)
+	}
 
 	// special case: listener listens to "NewDocument". If
 	// a non existing document gets deleted ... nothing should happen
@@ -161,7 +169,7 @@ func TestDelDocument(detector propchange.Detector, t *testing.T) {
 	assertNoChange(t, ctx, detector)
 
 	// delete non existing document
-	doc = assertOpenNewDoc(t, ctx, detector, "doc")
+	doc := assertOpenNewDoc(t, ctx, detector, "doc")
 	assert.NoError(t, doc.Delete())
 
 	// listener is not allowed to trigger
@@ -172,7 +180,7 @@ func TestDelDocument(detector propchange.Detector, t *testing.T) {
 	assert.NoError(t, doc.Commit())
 
 	// change should finally trigger
-	change, err = detector.NextChange(ctx)
+	change, err := detector.NextChange(ctx)
 	assert.NoError(t, err)
 	assertChange(t, change, "listener", []string{"doc"})
 	assert.NoError(t, change.Commit())
@@ -190,6 +198,8 @@ func TestDelProperty(detector propchange.Detector, t *testing.T) {
 	assert.NoError(t, doc.SetProperty("a", 0))
 	assert.NoError(t, doc.SetProperty("b", 1))
 	assert.NoError(t, doc.SetProperty("c", 2))
+	assert.NoError(t, doc.SetProperty("d", 3))
+	assert.NoError(t, doc.SetProperty("e", 4))
 	assert.NoError(t, doc.Commit())
 
 	assert.NoError(t, detector.AddListener(ctx, "listener", []propchange.ChangeFilter{{Document: docName, Properties: map[string]uint64{"a": 0}}}))
@@ -198,21 +208,21 @@ func TestDelProperty(detector propchange.Detector, t *testing.T) {
 	// delete a prop ... this should not trigger a change
 	doc, err := detector.OpenDocument(ctx, docName)
 	assert.NoError(t, err)
-	assert.Equal(t, map[string]uint64{"a": 0, "b": 1, "c": 2}, doc.GetProperties())
+	assert.Equal(t, map[string]uint64{"a": 0, "b": 1, "c": 2, "d": 3, "e": 4}, doc.GetProperties())
 	assert.NoError(t, doc.DelProperty("c"))
-	assert.Equal(t, map[string]uint64{"a": 0, "b": 1}, doc.GetProperties())
+	assert.Equal(t, map[string]uint64{"a": 0, "b": 1, "d": 3, "e": 4}, doc.GetProperties())
 	assert.NoError(t, doc.Commit())
 	assertNoChange(t, ctx, detector)
 
 	// delete prop that should trigger a change
 	doc, err = detector.OpenDocument(ctx, docName)
 	assert.NoError(t, err)
-	assert.Equal(t, map[string]uint64{"a": 0, "b": 1}, doc.GetProperties())
+	assert.Equal(t, map[string]uint64{"a": 0, "b": 1, "d": 3, "e": 4}, doc.GetProperties())
 	assert.NoError(t, doc.DelProperty("c")) // delete non existing prop should be silently ignored
 	assert.NoError(t, doc.DelProperty("a"))
 	assert.NoError(t, doc.DelProperty("b"))
 	assert.NoError(t, doc.SetProperty("b", 0))
-	assert.Equal(t, map[string]uint64{"b": 1}, doc.GetProperties())
+	assert.Equal(t, map[string]uint64{"b": 1, "d": 3, "e": 4}, doc.GetProperties())
 	assert.NoError(t, doc.Commit())
 
 	// the change ...
@@ -222,6 +232,21 @@ func TestDelProperty(detector propchange.Detector, t *testing.T) {
 	assert.NoError(t, change.Commit())
 
 	// no more changes
+	assertNoChange(t, ctx, detector)
+
+	// delete to props at a time, should trigger the listener once
+	assert.NoError(t, detector.AddListener(ctx, "listener", []propchange.ChangeFilter{{Document: docName, Properties: map[string]uint64{"d": 3, "e": 4}}}))
+	doc, err = detector.OpenDocument(ctx, docName)
+	assert.NoError(t, err)
+	assert.NoError(t, doc.DelProperty("d"))
+	assert.NoError(t, doc.DelProperty("e"))
+	assert.NoError(t, doc.Commit())
+
+	change, err = detector.NextChange(ctx)
+	assert.NoError(t, err)
+	assertChange(t, change, "listener", []string{docName})
+	assert.NoError(t, change.Commit())
+
 	assertNoChange(t, ctx, detector)
 }
 
@@ -492,34 +517,42 @@ func TestListenerMultiDelete(detector propchange.Detector, t *testing.T) {
 func TestListenerDocNotExisting(detector propchange.Detector, t *testing.T) {
 	ctx := context.TODO()
 
-	// make sure everthing is clean
-	assertNoChange(t, ctx, detector)
+	testCases := []map[string]uint64{
+		{"a": 1},
+		{"a": 1, "b": 1},
+	}
 
-	// listen to a doc that does not exists
-	assert.Nil(t, detector.AddListener(ctx, "listener", []propchange.ChangeFilter{{Document: "not-exists", Properties: map[string]uint64{"name": 1}}}))
+	for _, testCase := range testCases {
 
-	// a non existing doc should instantly trigger a change
-	change, err := detector.NextChange(ctx)
-	assert.NoError(t, err)
-	assertChange(t, change, "listener", []string{"not-exists"})
-	assert.Nil(t, change.Commit())
+		// make sure everthing is clean
+		assertNoChange(t, ctx, detector)
 
-	// no more change
-	assertNoChange(t, ctx, detector)
+		// listen to a doc that does not exists
+		assert.Nil(t, detector.AddListener(ctx, "listener", []propchange.ChangeFilter{{Document: "not-exists", Properties: testCase}}))
 
-	// retest ... but now a "new-doc" listener exists. The same thing should happen
-	assert.Nil(t, detector.AddListener(ctx, "listener-newdoc", []propchange.ChangeFilter{{Document: "not-exists", NewDocument: true}}))
-	assertNoChange(t, ctx, detector)
+		// a non existing doc should instantly trigger a change
+		change, err := detector.NextChange(ctx)
+		assert.NoError(t, err)
+		assertChange(t, change, "listener", []string{"not-exists"})
+		assert.Nil(t, change.Commit())
 
-	// new listener which should trigger instantly
-	assert.Nil(t, detector.AddListener(ctx, "listener", []propchange.ChangeFilter{{Document: "not-exists", Properties: map[string]uint64{"name": 1}}}))
+		// no more change
+		assertNoChange(t, ctx, detector)
 
-	change, err = detector.NextChange(ctx)
-	assert.NoError(t, err)
-	assertChange(t, change, "listener", []string{"not-exists"})
-	assert.Nil(t, change.Commit())
+		// retest ... but now a "new-doc" listener exists. The same thing should happen
+		assert.Nil(t, detector.AddListener(ctx, "listener-newdoc", []propchange.ChangeFilter{{Document: "not-exists", NewDocument: true}}))
+		assertNoChange(t, ctx, detector)
 
-	assertNoChange(t, ctx, detector)
+		// new listener which should trigger instantly
+		assert.Nil(t, detector.AddListener(ctx, "listener", []propchange.ChangeFilter{{Document: "not-exists", Properties: testCase}}))
+
+		change, err = detector.NextChange(ctx)
+		assert.NoError(t, err)
+		assertChange(t, change, "listener", []string{"not-exists"})
+		assert.Nil(t, change.Commit())
+
+		assertNoChange(t, ctx, detector)
+	}
 }
 
 func TestListenerPropNotExisting(detector propchange.Detector, t *testing.T) {
@@ -534,16 +567,24 @@ func TestListenerPropNotExisting(detector propchange.Detector, t *testing.T) {
 
 	assertDocExists(t, ctx, detector, docName)
 
-	// listen to prop that does not exist
-	assert.NoError(t, detector.AddListener(ctx, "listener-prop", []propchange.ChangeFilter{{Document: docName, Properties: map[string]uint64{"prop": 0}}}))
+	testCases := []map[string]uint64{
+		{"a": 1},
+		{"a": 1, "b": 1},
+	}
 
-	// listener should instantly trigger
-	change, err := detector.NextChange(ctx)
-	assert.NoError(t, err)
-	assertChange(t, change, "listener-prop", []string{docName})
-	assert.NoError(t, change.Commit())
+	for _, testCase := range testCases {
 
-	assertNoChange(t, ctx, detector)
+		// listen to prop that does not exist
+		assert.NoError(t, detector.AddListener(ctx, "listener-prop", []propchange.ChangeFilter{{Document: docName, Properties: testCase}}))
+
+		// listener should instantly trigger
+		change, err := detector.NextChange(ctx)
+		assert.NoError(t, err)
+		assertChange(t, change, "listener-prop", []string{docName})
+		assert.NoError(t, change.Commit())
+
+		assertNoChange(t, ctx, detector)
+	}
 }
 
 func TestListenerNameReuse(detector propchange.Detector, t *testing.T) {
