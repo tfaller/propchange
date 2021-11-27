@@ -125,13 +125,16 @@ func (d *Detector) prepare() (err error) {
 			Query: "DELETE FROM document WHERE id = ?"},
 
 		{Name: "del-doc-convert", Target: &d.stmtDelDocConvert,
-			Query: "UPDATE listener_property SET property = -1, changed = 1 WHERE property IN (SELECT id FROM property WHERE document = ?)"},
+			Query: `INSERT INTO listener_property 
+					(SELECT lp.listener, -1, 0, 1 FROM property p JOIN listener_property lp ON lp.property = p.id WHERE document = ? FOR SHARE)
+					ON DUPLICATE KEY UPDATE changed = 1`},
 
 		{Name: "del-prop", Target: &d.stmtDelProp,
 			Query: "DELETE FROM property WHERE id = ?"},
 
 		{Name: "del-prop-convert", Target: &d.stmtDelPropConvert,
-			Query: "UPDATE listener_property SET property = -1, changed = 1 WHERE property = ?"},
+			Query: `INSERT INTO listener_property (SELECT listener, -1, 0, 1 FROM listener_property WHERE property = ? FOR SHARE)
+					ON DUPLICATE KEY UPDATE changed = 1`},
 
 		{Name: "insert-prop", Target: &d.stmtInsertProperty,
 			Query: "INSERT INTO property (name, document, revision) VALUES (?,?,?)"},
