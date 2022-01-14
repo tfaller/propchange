@@ -50,6 +50,7 @@ type Detector struct {
 	stmtAddListenerProps *sql.Stmt
 	stmtGetListener      *sql.Stmt
 	stmtDelListener      *sql.Stmt
+	stmtDelListenerID    *sql.Stmt
 	stmtNextChange       *sql.Stmt
 }
 
@@ -182,15 +183,25 @@ func (d *Detector) prepare() (err error) {
 		{Name: "del-listener", Target: &d.stmtDelListener,
 			Query: "DELETE FROM listener WHERE name = ?"},
 
-		// This query finds the next change ... we have to LOCK the listener_property and
-		// the whole listener. With the lock we make sure that a concurent NextChange
-		// skips this listener. Otherwise the same listener could be triggered multiples times,
-		// if multiple properties of the same listener changed at the same time. Also, we have to
-		// do a "sub-query", a direct JOIN would lock unrelated changes.
+		{Name: "del-listener-id", Target: &d.stmtDelListenerID,
+			Query: "DELETE FROM listener WHERE id = ?"},
+
+		// This query finds the next change ... we have to lock only the listener.
+		// With the lock we make sure that a concurrent NextChange skips this listener.
+		// Otherwise the same listener could be triggered multiples times,
+		// if multiple properties of the same listener changed at the same time. Also, we can't
+		// lock listener_property because this might block other changes in the following scenario:
+		// p1, l1 (S1 locks this row (and therefore p1 and l1))
+		// p2, l1 (S2 locks p2 but cant l1 and skips this row)
+		// p3, l2 (S2 locks this row (and p3, l2))
+		// In this scenario S1 cant delete the listener because p2 of l1 listener is locked by S2.
+		// So, we can only lock the listener, not the property. But this is no problem because
+		// we don't do anything with listener_property.
 		{Name: "nxt-change", Target: &d.stmtNextChange,
-			Query: `SELECT l.id, l.name, JSON_KEYS(l.docs) AS docs FROM 
-					(SELECT * FROM listener_property WHERE changed = 1 LIMIT 1 FOR UPDATE SKIP LOCKED) lp
-					JOIN listener l ON l.id = lp.listener FOR UPDATE SKIP LOCKED
+			Query: `SELECT l.id, l.name, JSON_KEYS(l.docs) AS docs
+					FROM listener_property
+					JOIN (SELECT * FROM listener FOR UPDATE SKIP LOCKED) l ON l.id = listener
+					WHERE changed = 1 LIMIT 1
 					`},
 
 		{Name: "doc-created", Target: &d.stmtCreatedDoc,
@@ -701,10 +712,10 @@ func (m *mysqlChange) Close() error {
 // Commit closes the change and removes it from
 // the assigned listener.
 func (m *mysqlChange) Commit() error {
-	stmt := m.tx.Stmt(m.detector.stmtDelListener)
+	stmt := m.tx.Stmt(m.detector.stmtDelListenerID)
 	defer stmt.Close()
 
-	_, err := stmt.Exec(m.listener)
+	_, err := stmt.Exec(m.listenerID)
 	if err != nil {
 		return fmt.Errorf("can't delete listener: %w", err)
 	}

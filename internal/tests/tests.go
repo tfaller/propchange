@@ -32,6 +32,7 @@ func TestSuite(detector propchange.Detector, t *testing.T) {
 	t.Run("TestAbortNewDocument", func(t *testing.T) { TestAbortNewDocument(detector, t) })
 	t.Run("TestAbortChange", func(t *testing.T) { TestAbortChange(detector, t) })
 	t.Run("TestSingleChange", func(t *testing.T) { TestSingleChange(detector, t) })
+	t.Run("TestConcurrentChange", func(t *testing.T) { TestConcurrentChange(detector, t) })
 }
 
 func TestBasicChange(detector propchange.Detector, t *testing.T) {
@@ -909,6 +910,54 @@ func TestSingleChange(detector propchange.Detector, t *testing.T) {
 	assert.NoError(t, change.Commit())
 
 	// no more changes ...
+	assertNoChange(t, ctx, detector)
+}
+
+func TestConcurrentChange(detector propchange.Detector, t *testing.T) {
+	ctx := context.TODO()
+	assert := assert.New(t)
+
+	concurrentDocs := []string{"concurrentA", "concurrentB"}
+
+	// prepare two docs
+	for _, docName := range concurrentDocs {
+		doc := assertOpenNewDoc(t, ctx, detector, docName)
+		assert.NoError(doc.SetProperty("1", 2))
+		assert.NoError(doc.SetProperty("2", 2))
+		assert.NoError(doc.Commit())
+
+		// listen with multiple props ... should be only one change.
+		// testing multiple props is important because this once broke concurrent change
+		// on mysql. only one change at a time was possible.
+		assert.NoError(detector.AddListener(ctx, docName, []propchange.ChangeFilter{
+			{Document: docName,
+				Properties: map[string]uint64{"1": 1, "2": 1},
+			},
+		}))
+	}
+
+	firstChange, err := detector.NextChange(ctx)
+	assert.NoError(err)
+	assert.Len(firstChange.Documents(), 1)
+	assert.Contains(concurrentDocs, firstChange.Documents()[0])
+	assert.Equal(firstChange.Listener(), firstChange.Documents()[0])
+
+	secondChange, err := detector.NextChange(ctx)
+	assert.NoError(err)
+	assert.Len(secondChange.Documents(), 1)
+	assert.Contains(concurrentDocs, secondChange.Documents()[0])
+	assert.Equal(secondChange.Listener(), secondChange.Documents()[0])
+
+	// must be different changes
+	assert.NotEqual(firstChange.Listener(), secondChange.Listener())
+
+	// all existing changes should be open ...
+	assertNoChange(t, ctx, detector)
+
+	assert.NoError(firstChange.Commit())
+	assert.NoError(secondChange.Commit())
+
+	// after cleanup no more changes
 	assertNoChange(t, ctx, detector)
 }
 
