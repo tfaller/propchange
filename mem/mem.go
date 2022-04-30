@@ -509,38 +509,26 @@ func (d *doc) getOrCreateProp(name string) *prop {
 
 // listenTo insters a listener into de doubly linked listener chain
 func (p *prop) listenTo(l *listener, revision uint64) *listenerChain {
-	current := p.listeners
+	previous := (*listenerChain)(nil)
+	current := &p.listeners
 
-	if current != nil {
-		for revision > current.revision && current.next != nil {
-			current = current.next
-		}
-		if revision <= current.revision {
-			current = current.prev
-		}
+	for *current != nil && revision > (*current).revision {
+		previous = *current
+		current = &(*current).next
 	}
 
-	current = &listenerChain{
+	*current = &listenerChain{
 		revision: revision,
 		listener: l,
-		prev:     current,
+		prev:     previous,
+		next:     *current,
 	}
 
-	if current.prev == nil {
-		if p.listeners != nil {
-			p.listeners.prev = current
-		}
-		current.next = p.listeners
-		p.listeners = current
-	} else {
-		current.next = current.prev.next
-		current.prev.next = current
-		if current.next != nil {
-			current.next.prev = current
-		}
+	if (*current).next != nil {
+		(*current).next.prev = *current
 	}
 
-	return current
+	return *current
 }
 
 func (p *prop) triggerChange(m *mem, rev uint64) {
